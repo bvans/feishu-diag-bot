@@ -85,6 +85,36 @@ WantedBy=multi-user.target
 
 `.env` 里放三个环境变量（`FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`GEMINI_API_KEY`）。
 
+## Codex CLI 诊断（可选，默认开启）
+
+`config.yaml` 里 `codex.enabled=true` 时，诊断走 Codex CLI；未安装 / 失败 / 超时时
+自动兜底到内置快速通道（正则 + grep + 一次 LLM 调用），不会丢诊断。
+
+**配置**（`config.yaml` 的 `codex` 一节）：
+
+- `repos`：诊断时 Codex 可访问的代码仓库列表。第一个为工作目录（`-C`），其余用
+  `--add-dir` 挂载。为空时回落到旧的 `repo.path`。
+- `mcp_servers`：辅助诊断的 MCP 服务器列表（Codex 原生支持），每项配 `name` /
+  `command` / `args` / `env`。不需要就删掉整节。
+- `model`：留空用 Codex 默认模型；`reasoning_effort`：low / medium / high；
+  `timeout_seconds`：单次诊断超时（默认 180 秒）。
+
+**安装**：
+
+```bash
+bash scripts/setup-codex.sh   # 检查 Node.js，npm install -g @openai/codex
+```
+
+**认证**：Codex CLI 自己负责——`OPENAI_API_KEY` 环境变量（见 `.env.example`），
+或按 Codex 官方文档用 ChatGPT 登录。
+
+**机器人怎么调它**：每次诊断生成临时 `CODEX_HOME`（不碰你的 `~/.codex`），
+里面只写本次的 `config.toml`（`approval_policy="never"`、`sandbox_mode="read-only"`、
+模型、MCP 服务器）；命令是
+`codex exec -C <主仓库> --add-dir <其他仓库> --output-last-message <临时文件> "<提示词>"`。
+机器人启动时若 `codex.enabled=true` 但找不到 `codex` 二进制，只记一条警告，
+不影响运行。
+
 ## 换 LLM
 
 `config.yaml` 里 `llm` 一节改 `base_url` + `model` 即可，接口是 OpenAI 兼容的：

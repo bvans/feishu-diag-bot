@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import threading
 import time
 
@@ -184,6 +185,9 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
 def main() -> None:
     if not CFG["feishu"]["app_id"] or not CFG["feishu"]["app_secret"]:
         raise SystemExit("缺少 FEISHU_APP_ID / FEISHU_APP_SECRET 环境变量")
+    codex_cfg = CFG.get("codex") or {}
+    if codex_cfg.get("enabled") and not shutil.which(codex_cfg.get("binary") or "codex"):
+        log.warning("codex.enabled=true 但未找到 Codex CLI（npm install -g @openai/codex），诊断将走快速通道兜底")
     event_handler = (
         lark.EventDispatcherHandler.builder("", "")
         .register_p2_im_message_receive_v1(do_p2_im_message_receive_v1)

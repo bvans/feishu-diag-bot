@@ -12,6 +12,10 @@ import os
 import re
 import subprocess
 
+import logging
+
+log = logging.getLogger("feishu-diag-bot")
+
 # ---------- 信号提取 ----------
 
 # 栈追踪里的文件:行号，如 app/api/order.py:128
@@ -255,7 +259,15 @@ def format_reply(result: dict) -> str:
 
 
 def diagnose(issue_text: str, cfg: dict) -> str:
-    """完整诊断流水线：信号 -> 日志 -> 代码 -> LLM -> 回复文本。"""
+    """完整诊断：codex.enabled 时走 Codex CLI；否则 / Codex 失败时走内置快速通道。"""
+    codex_cfg = cfg.get("codex") or {}
+    if codex_cfg.get("enabled"):
+        try:
+            from codex_diag import diagnose_with_codex
+
+            return diagnose_with_codex(issue_text, cfg)
+        except Exception:  # noqa: BLE001 - Codex 失败不丢诊断，兜底快速通道
+            log.warning("Codex 诊断失败，走快速通道兜底", exc_info=True)
     signals = extract_signals(issue_text)
     logs = search_logs(signals, cfg.get("logs", []), max_total=cfg.get("reply", {}).get("max_log_lines", 40))
     code = search_code(signals, cfg.get("repo", {}), max_hits=cfg.get("reply", {}).get("max_code_hits", 20))

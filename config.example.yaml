@@ -26,6 +26,24 @@ repo:
   path: "/opt/myapp"
   include_ext: [".py", ".go", ".js", ".ts", ".java"]
 
+# Codex CLI 诊断：启用后诊断走 Codex CLI；未启用 / 未安装 / 失败时自动兜底快速通道。
+codex:
+  enabled: true
+  model: ""   # 留空用 Codex 默认模型；想固定时填如 gpt-5.3-codex
+  reasoning_effort: "medium"  # low / medium / high；留空用 Codex 默认
+  timeout_seconds: 180  # Codex 单次诊断超时（秒）
+  # 诊断时 Codex 可访问的代码仓库：第一个为工作目录（-C），其余用 --add-dir 挂载。
+  repos:
+    - "/opt/myapp"
+    - "/opt/myapp-shared-lib"
+  # 辅助诊断的 MCP 服务器（Codex 原生支持，command 需在 PATH 里）。
+  # 不需要就删掉整个 mcp_servers 一节。
+  mcp_servers:
+    - name: "logsearch"
+      command: "npx"
+      args: ["-y", "example-log-mcp"]
+      env: {}
+
 reply:
   ack_text: "收到，正在结合日志和代码诊断…"
   max_log_lines: 40    # 喂给 LLM 的日志证据上限
