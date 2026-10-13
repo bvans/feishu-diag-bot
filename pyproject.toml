@@ -1,0 +1,14 @@
+[project]
+name = "feishu-diag-bot"
+version = "0.1.0"
+description = "飞书诊断机器人：测试人员 @机器人，自动结合服务器日志 + 代码库诊断，群内回复结论。"
+requires-python = ">=3.10"
+dependencies = [
+    "lark-oapi",
+    "openai",
+    "pyyaml",
+]
+
+[tool.uv]
+# 纯应用仓库，不打包成可安装的包：uv sync 只建 .venv 并装依赖，用 `uv run bot.py` 启动
+package = false
