@@ -87,45 +87,54 @@ WantedBy=multi-user.target
 
 ## Docker 部署（推荐）
 
-诊断仓库在 **build 时烘焙进镜像**，运行时不再联网 clone，内网可用。
-一份配置文件传入：git 仓库地址、MCP 配置、提示词。
+三层镜像，逐层往上封装：
+
+```
+eceasy/cli-proxy-api:latest            # 官方代理镜像（Responses <-> Chat Completions 转换）
+  └─ Dockerfile.base                    # 二次基础镜像 feishu-diag-base：+ Codex CLI + Python/Node 工具链
+      └─ Dockerfile                     # 业务镜像 feishu-diag-bot：Python 应用 + build 时烘焙诊断仓库
+```
+
+业务镜像初始化（build）时 `git clone` 你提供的仓库（`codex-repos.txt` 清单），
+烘焙进镜像；容器启动时不再 clone，内网可用。
 
 ```bash
 # 1. 准备配置和凭据
 cp config.example.yaml config.yaml   # 改成你的：仓库地址、MCP、提示词
-cp .env.example .env                 # 填 FEISHU_APP_ID、FEISHU_APP_SECRET、OPENAI_API_KEY 等
+cp cliproxyapi-config.example.yaml cliproxyapi-config.yaml  # 填上游端点和两个 key
+cp .env.example .env                 # 填 FEISHU_APP_ID、FEISHU_APP_SECRET、CLIPROXYAPI_API_KEY 等
 # 诊断仓库清单（每行一个 git URL）：编辑 codex-repos.txt
 
-# 2. 构建镜像（公开仓库）
-docker build -t feishu-diag-bot .
-# 私有仓库：build 时传 SSH key（BuildKit secret，不进镜像层）
-docker build --secret id=git_ssh_key,src=./id_diag -t feishu-diag-bot .
+# 2. 构建两层镜像（先 base，后业务）
+scripts/build.sh
+# 私有仓库：GIT_SSH_KEY=./id_diag scripts/build.sh（build 时传 SSH key，BuildKit secret，不进镜像层）
+# 把代理钉到具体版本：CLIPROXYAPI_IMAGE=eceasy/cli-proxy-api:v6.0.0 scripts/build.sh
 
-# 3. 启动（挂载配置 + 日志目录）
-docker run -d --name feishu-diag-bot --restart unless-stopped \
-  --env-file .env \
-  -v ./config.yaml:/app/config.yaml:ro \
-  -v /var/log/myapp:/var/log/myapp:ro \
-  feishu-diag-bot
+# 3. 启动（单容器，挂载配置 + 日志目录）
+docker compose up -d
+# 或 docker run -d --name feishu-diag-bot --restart unless-stopped \
+#   --env-file .env \
+#   -v ./config.yaml:/app/config.yaml:ro \
+#   -v ./cliproxyapi-config.yaml:/CLIProxyAPI/config.yaml:ro \
+#   -v /var/log/myapp:/var/log/myapp:ro \
+#   feishu-diag-bot
 ```
 
 内网部署：有网的机器上 build 好后 `docker save feishu-diag-bot > bot.tar`，
-拷到内网机器 `docker load < bot.tar` 即可运行（运行时不再需要访问 git 仓库，
-但仍需访问飞书 API 和模型 API，或走代理/中转）。
+拷到内网机器 `docker load < bot.tar` 即可运行——业务镜像里已含一切，
+内网机器不需要二次基础镜像。运行时仍需访问飞书 API 和模型 API（或走代理/中转），
+但不再需要访问 git 仓库。
 
-或用 compose（`cp docker-compose.example.yml docker-compose.yml` 后改，
-另需 `cp cliproxyapi-config.example.yaml cliproxyapi-config.yaml`）：
+**启动流程**（单容器，`start.sh`）：启动 CLIProxyAPI（后台，等 8317 就绪）
+→ `entrypoint.py` 把 `config.yaml` 里 `codex.repos` 的 URL 映射到 build 时已烘焙的
+目录（`/app/repos/<目录>`，按镜像内 `.baked-manifest.json`）→ 生成有效配置 →
+启动 `bot.py`。本地路径的 repos 条目原样使用；URL 对应目录不存在时记警告并跳过，
+不阻止机器人启动。仓库更新靠重新 build（`scripts/build.sh` 会重新 clone 最新版）。
 
-```bash
-docker compose up -d --build
-```
-
-compose 里带了一个 `cliproxyapi` sidecar（CLIProxyAPI，镜像
-`eceasy/cli-proxy-api:latest`）：它把 Chat Completions 兼容端点转成 Codex 要的
-Responses 协议。`config.yaml` 里 `codex.model_providers` 指向它
-（`base_url: http://cliproxyapi:8317/v1`，`env_key: CLIPROXYAPI_API_KEY`），
-`cliproxyapi-config.yaml` 里配上游端点和 key。不用它时（直连 OpenAI / ChatGPT
-登录）删掉这个服务，并把 `model_providers` 改回直连或删掉。
+**代理配置**：`cliproxyapi-config.yaml` 运行时挂载到 `/CLIProxyAPI/config.yaml`，
+不进镜像。`config.yaml` 里 `codex.model_providers` 指向同容器内的代理
+（`base_url: http://127.0.0.1:8317/v1`，`env_key: CLIPROXYAPI_API_KEY`）。
+不用代理时（直连 OpenAI / ChatGPT 登录）把 `model_providers` 改回直连或删掉。
 
 **飞书凭据走环境变量**：`FEISHU_APP_ID` / `FEISHU_APP_SECRET` 在 `.env` 里填，
 环境变量优先于 `config.yaml` 里的 `feishu` 一节。
@@ -133,18 +142,13 @@ Responses 协议。`config.yaml` 里 `codex.model_providers` 指向它
 **仓库可选**：`codex.repos` 可空，不配时 Codex 以当前工作目录（容器里是 `/app`，
 镜像里已装好 Codex CLI，可直接跑）做工作区。
 
-**启动流程**（`entrypoint.py`）：把 `config.yaml` 里 `codex.repos` 的 URL
-映射到 build 时已烘焙的目录（`/app/repos/<目录>`，按镜像内
-`.baked-manifest.json`）→ 生成有效配置 → 启动 `bot.py`。本地路径的 repos 条目
-原样使用；URL 对应目录不存在时记警告并跳过，不阻止机器人启动。
-仓库更新靠重新 build（`docker compose up -d --build` 会重新 clone 最新版）。
-
 **安全注意**：
 
-- `config.yaml` / `.env` 不进镜像（`.dockerignore` 已排除），只在运行时挂载。
+- `config.yaml` / `.env` / `cliproxyapi-config.yaml` 不进镜像（`.dockerignore` 已排除），只在运行时挂载。
 - BuildKit secret（`--secret id=git_ssh_key`）不会留在镜像层里，比把 key COPY 进镜像安全。
 - 直接 `uv run bot.py` 时 `codex.repos` 只能用本地路径（没有 build 时烘焙）。
 - `cliproxyapi-config.yaml` 里也有 key（上游 key + 访问代理的客户端 key），同样勿提交到 Git。
+- compose 里 8317 只绑 `127.0.0.1`，不要公网暴露。
 
 ## Codex CLI 诊断（可选，默认开启）
 

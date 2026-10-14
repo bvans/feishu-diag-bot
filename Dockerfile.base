@@ -1,0 +1,21 @@
+# 二次基础镜像：CLIProxyAPI（官方镜像）+ Codex CLI + Python/Node 工具链。
+# 业务镜像 FROM 本镜像即可，不用再装代理和 Codex。
+# 构建：scripts/build.sh（或 docker build -f Dockerfile.base -t feishu-diag-base:latest .）
+# 钉代理版本：docker build --build-arg CLIPROXYAPI_IMAGE=eceasy/cli-proxy-api:v6.0.0 -f Dockerfile.base ...
+ARG CLIPROXYAPI_IMAGE=eceasy/cli-proxy-api:latest
+FROM ${CLIPROXYAPI_IMAGE}
+
+# 官方镜像是 debian:bookworm，WORKDIR /CLIProxyAPI，二进制 ./CLIProxyAPI，
+# 默认读 /CLIProxyAPI/config.yaml，监听 8317。保持这些约定，start.sh 直接 cd 过去启动。
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates git openssh-client nodejs npm \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g @openai/codex
+
+# uv（Astral 官方安装脚本）+ Python 3.12（uv 管理，供业务镜像 uv sync 使用）
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+RUN uv python install 3.12
+
+# 业务代码在 /app；代理仍在 /CLIProxyAPI（见 start.sh）
+WORKDIR /app
