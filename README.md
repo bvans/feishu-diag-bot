@@ -156,6 +156,32 @@ uv run python webchat.py [config.yaml]   # 默认 http://127.0.0.1:8080
 - 只绑 `127.0.0.1`，不要公网暴露（无鉴权）。
 - Docker 里跑：`docker run --rm -p 127.0.0.1:8080:8080 -v ./config.yaml:/app/config.yaml:ro -v /var/log/myapp:/var/log/myapp:ro feishu-diag-bot uv run python webchat.py`（用业务镜像，命令覆盖启动 webchat；诊断要读的仓库已烘焙在镜像里）。
 
+## 管理配置界面（人工改部署配置，不用手写文件）
+
+在浏览器里改部署需要的四个配置，不用直接编辑文件：
+
+```bash
+uv run python admin.py [配置目录]   # 默认当前目录，打开 http://127.0.0.1:8081
+# 端口：ADMIN_PORT=8082 uv run python admin.py
+```
+
+- **config.yaml**：机器人配置（飞书/LLM/日志/仓库/提示词/Codex/回复）。
+- **cliproxyapi-config.yaml**：代理配置（端口/客户端 key/上游端点/模型别名）。
+- **.env**：环境变量凭据（飞书 App 密钥、各 API key）。
+- **codex-repos.txt**：build 时烘焙进业务镜像的仓库清单（每行一个 URL）。
+
+机制：保存前按类型校验（YAML 必须能解析，`.env` 每行必须是 `KEY=VALUE`），
+校验失败不写盘；每次保存前自动备份旧文件（保留最近 5 份），可一键恢复；
+文件不存在时可从同名 `.example` 示例创建（`codex-repos.txt` 建空文件）。
+
+注意：
+- 只绑 `127.0.0.1`，不要公网暴露（无鉴权，且 `.env` 密钥会明文显示）。
+- 保存只改文件，不重启服务：改 `config.yaml` / `cliproxyapi-config.yaml` / `.env`
+  后重启容器生效（`docker compose restart`）；改 `codex-repos.txt` 后需重新 build
+  业务镜像（`scripts/build.sh`）才能烘焙新仓库。
+- Docker 里跑：`docker run --rm -p 127.0.0.1:8081:8081 -v ./:/app/config-dir:rw feishu-diag-bot uv run python admin.py /app/config-dir`
+  （配置目录需可写挂载，默认 compose 里是只读挂载，admin 在 Docker 里改不了）。
+
 ## Codex CLI 诊断（可选，默认开启）
 
 `config.yaml` 里 `codex.enabled=true` 时，诊断走 Codex CLI；未安装 / 失败 / 超时时

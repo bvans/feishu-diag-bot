@@ -19,6 +19,7 @@ def test_business_image_from_uv_and_installs_codex():
     assert "npm install -g @openai/codex" in dockerfile
     assert "bake_repos.py" in dockerfile, "业务镜像 build 时必须烘焙仓库"
     assert "webchat.py" in dockerfile, "网页聊天窗口必须拷进业务镜像"
+    assert "admin.py" in dockerfile, "管理配置界面必须拷进业务镜像"
     assert 'ENTRYPOINT ["uv", "run", "python", "entrypoint.py"]' in dockerfile
     assert "eceasy/cli-proxy-api" not in dockerfile, "代理已拆出独立容器，不应进业务镜像"
 

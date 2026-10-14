@@ -15,7 +15,7 @@ WORKDIR /app
 COPY pyproject.toml .python-version uv.lock* ./
 RUN uv sync
 
-COPY bot.py diagnose.py slots.py card_form.py codex_diag.py entrypoint.py bake_repos.py webchat.py ./
+COPY bot.py diagnose.py slots.py card_form.py codex_diag.py entrypoint.py bake_repos.py webchat.py admin.py ./
 COPY scripts/ ./scripts/
 
 # 烘焙诊断仓库：codex-repos.txt 每行一个 git URL；私有仓库用 BuildKit secret 传 SSH key：
