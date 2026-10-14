@@ -142,6 +142,20 @@ cliproxyapi 服务，并把 `model_providers` 改回直连或删掉。
 - `cliproxyapi-config.yaml` 里也有 key（上游 key + 访问代理的客户端 key），同样勿提交到 Git。
 - compose 里 8317 只绑 `127.0.0.1`，不要公网暴露。
 
+## 网页聊天窗口（本地测试用，不用飞书）
+
+和飞书群里 @机器人 同一套逻辑（必填项追问 → 30 分钟内补充合并 → 集齐后诊断），
+只是在浏览器里对话，方便不进飞书群直接测试：
+
+```bash
+uv run python webchat.py [config.yaml]   # 默认 http://127.0.0.1:8080
+# 端口：WEBCHAT_PORT=8081 uv run python webchat.py
+```
+
+- 不需要飞书凭据，只读 `config.yaml` 里的诊断配置（codex / llm / logs / repo）。
+- 只绑 `127.0.0.1`，不要公网暴露（无鉴权）。
+- Docker 里跑：`docker run --rm -p 127.0.0.1:8080:8080 -v ./config.yaml:/app/config.yaml:ro -v /var/log/myapp:/var/log/myapp:ro feishu-diag-bot uv run python webchat.py`（用业务镜像，命令覆盖启动 webchat；诊断要读的仓库已烘焙在镜像里）。
+
 ## Codex CLI 诊断（可选，默认开启）
 
 `config.yaml` 里 `codex.enabled=true` 时，诊断走 Codex CLI；未安装 / 失败 / 超时时
