@@ -1,0 +1,23 @@
+# CLIProxyAPI 配置示例：复制为 cliproxyapi-config.yaml 后改成你自己的值。
+# 完整字段说明见上游 config.example.yaml（router-for-me/CLIProxyAPI）。
+# 本文件只开最小可用集：客户端鉴权 + 一个 OpenAI 兼容上游。
+config-version: 8
+
+server:
+  port: 8317
+
+# 访问本代理的客户端 key（Codex 侧用 CLIPROXYAPI_API_KEY 填这里其中一个）。
+access:
+  api-keys:
+    - "CHANGE-ME-proxy-client-key"
+
+# 上游：你的 Chat Completions 兼容端点（OpenRouter / DeepSeek / 自建等）。
+# CLIProxyAPI 把 Codex 发来的 Responses 请求转成 Chat Completions 发给上游，响应再转回来。
+openai-compatibility:
+  - name: "my-upstream"
+    base-url: "https://openrouter.ai/api/v1"  # 必须以 /v1 结尾；改成你的上游
+    keys:
+      - api-key: "CHANGE-ME-upstream-key"
+    models:
+      - name: "moonshotai/kimi-k2"  # 上游真实模型名
+        alias: "kimi-k2"          # Codex 侧看到的模型名；config.yaml 里 codex.model 填这个

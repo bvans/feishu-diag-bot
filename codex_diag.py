@@ -1,16 +1,20 @@
 """Codex CLI 诊断：机器人把问题交给 Codex CLI，Codex 在配置的仓库 + MCP 帮助下自主查证。
 
 设计要点：
-- 配置驱动：仓库列表（codex.repos）+ MCP 服务器列表（codex.mcp_servers）都在
-  config.yaml 里配；机器人不硬编码任何仓库或 MCP。
+- 配置驱动：仓库列表（codex.repos）+ MCP 服务器列表（codex.mcp_servers）+
+  模型提供方（codex.model_providers）都在 config.yaml 里配；机器人不硬编码任何仓库或 MCP。
+  repos 可空：不配时以当前工作目录（容器里是 /app）做 Codex 工作区。
 - 不碰用户现有的 ~/.codex：每次诊断生成一个临时 CODEX_HOME，里面只写本次诊断
   需要的 config.toml（模型、沙箱、审批策略、MCP 服务器），诊断完随临时目录删掉。
 - 只查不改：config.toml 里 approval_policy="never"、sandbox_mode="read-only"，
   Codex 只能读、不能改文件、不能弹授权框。
 - 失败不丢诊断：codex 二进制缺失 / 超时 / 非零退出 / 无输出时抛 CodexError，
   由 diagnose.py 兜底走内置快速通道（正则 + grep + 一次 LLM 调用）。
-- 认证：Codex CLI 自己负责（OPENAI_API_KEY 环境变量，或 ChatGPT 登录），
+- 认证：Codex CLI 自己负责（OPENAI_API_KEY 环境变量、ChatGPT 登录，
+  或 model_providers 里 env_key / experimental_bearer_token 指定的凭据），
   机器人不处理凭据，只透传环境变量。
+- 注意：Codex 只认 Responses 协议。光设 OPENAI_BASE_URL 不生效（实测 0.149.0
+  会忽略它、仍连 api.openai.com），必须用 model_providers 指过去。
 """
 
 import json
@@ -47,6 +51,32 @@ def build_codex_toml(codex_cfg: dict) -> str:
     effort = (codex_cfg.get("reasoning_effort") or "").strip()
     if effort:
         lines.append(f"model_reasoning_effort = {_toml_str(effort)}")
+    provider = (codex_cfg.get("model_provider") or "").strip()
+    if provider:
+        lines.append(f"model_provider = {_toml_str(provider)}")
+    for pid, prov in (codex_cfg.get("model_providers") or {}).items():
+        if not isinstance(prov, dict):
+            continue
+        pid = str(pid).strip()
+        if not pid:
+            continue
+        lines.append("")
+        lines.append(f"[model_providers.{_toml_str(pid)}]")
+        for key in ("name", "base_url", "env_key", "wire_api",
+                    "model_catalog_url", "experimental_bearer_token"):
+            val = prov.get(key)
+            if isinstance(val, str) and val.strip():
+                lines.append(f"{key} = {_toml_str(val)}")
+        for key in ("requires_openai_auth", "supports_websockets", "api_key_model_discovery"):
+            val = prov.get(key)
+            if isinstance(val, bool):
+                lines.append(f"{key} = {'true' if val else 'false'}")
+        headers = prov.get("http_headers")
+        if isinstance(headers, dict) and headers:
+            pairs = ", ".join(
+                f"{_toml_str(str(k))} = {_toml_str(str(v))}" for k, v in headers.items()
+            )
+            lines.append(f"http_headers = {{ {pairs} }}")
     for server in codex_cfg.get("mcp_servers") or []:
         name = (server.get("name") or "").strip()
         command = (server.get("command") or "").strip()
@@ -161,7 +191,9 @@ def diagnose_with_codex(issue_text: str, cfg: dict) -> str:
         raise CodexError(f"未找到 Codex CLI（{binary}），先跑 scripts/setup-codex.sh 安装")
     repos = resolve_repos(codex_cfg, cfg)
     if not repos:
-        raise CodexError("codex.repos 为空且无可用仓库，未配置诊断仓库")
+        # 仓库可选：不配时以当前工作目录做 Codex 工作区（容器里是 /app）。
+        repos = [os.getcwd()]
+        log.info("codex.repos 未配置，用当前工作目录做 Codex 工作区：%s", repos[0])
 
     # 认证预检：无 key、无登录时 codex exec 会一直等待而不是快速失败，
     # 必须在启动前拦住（不要等到 timeout 才兜底）。
@@ -172,6 +204,17 @@ def diagnose_with_codex(issue_text: str, cfg: dict) -> str:
         "auth.json",
     )
     has_key = bool(merged_env.get("OPENAI_API_KEY"))
+    if not has_key:
+        for prov in (codex_cfg.get("model_providers") or {}).values():
+            if not isinstance(prov, dict):
+                continue
+            if prov.get("experimental_bearer_token"):
+                has_key = True
+                break
+            env_key = prov.get("env_key")
+            if env_key and merged_env.get(str(env_key)):
+                has_key = True
+                break
     has_login = os.path.isfile(auth_src)
     if not has_key and not has_login:
         raise CodexError(
@@ -191,7 +234,9 @@ def diagnose_with_codex(issue_text: str, cfg: dict) -> str:
             shutil.copyfile(auth_src, auth_dst)
             os.chmod(auth_dst, 0o600)
         out_file = os.path.join(tmp, "final.md")
-        cmd = [binary_path, "exec", "-C", repos[0]]
+        # --skip-git-repo-check：工作区可能不是 git 仓库（仓库可选、日志目录等），
+        # 机器人是非交互运行，不能弹信任确认。
+        cmd = [binary_path, "exec", "--skip-git-repo-check", "-C", repos[0]]
         for extra in repos[1:]:
             cmd += ["--add-dir", extra]
         cmd += ["--output-last-message", out_file, build_prompt(issue_text, cfg)]

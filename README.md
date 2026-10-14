@@ -105,11 +105,25 @@ docker run -d --name feishu-diag-bot --restart unless-stopped \
   feishu-diag-bot
 ```
 
-或用 compose（`cp docker-compose.example.yml docker-compose.yml` 后改）：
+或用 compose（`cp docker-compose.example.yml docker-compose.yml` 后改，
+另需 `cp cliproxyapi-config.example.yaml cliproxyapi-config.yaml`）：
 
 ```bash
 docker compose up -d --build
 ```
+
+compose 里带了一个 `cliproxyapi` sidecar（CLIProxyAPI，镜像
+`eceasy/cli-proxy-api:latest`）：它把 Chat Completions 兼容端点转成 Codex 要的
+Responses 协议。`config.yaml` 里 `codex.model_providers` 指向它
+（`base_url: http://cliproxyapi:8317/v1`，`env_key: CLIPROXYAPI_API_KEY`），
+`cliproxyapi-config.yaml` 里配上游端点和 key。不用它时（直连 OpenAI / ChatGPT
+登录）删掉这个服务，并把 `model_providers` 改回直连或删掉。
+
+**飞书凭据走环境变量**：`FEISHU_APP_ID` / `FEISHU_APP_SECRET` 在 `.env` 里填，
+环境变量优先于 `config.yaml` 里的 `feishu` 一节。
+
+**仓库可选**：`codex.repos` 可空，不配时 Codex 以当前工作目录（容器里是 `/app`，
+镜像里已装好 Codex CLI，可直接跑）做工作区。
 
 **启动流程**（`entrypoint.py`）：配好 SSH key → 把 `codex.repos` 里的 git URL
 clone/pull 到 `codex.repos_dir`（默认 `/app/repos`）→ 生成去掉内嵌密钥的有效配置 →
@@ -122,6 +136,7 @@ clone/pull 到 `codex.repos_dir`（默认 `/app/repos`）→ 生成去掉内嵌�
 - 含私钥的 `config.yaml` 勿提交到 Git；推荐用 `git_ssh_key_file` 挂载密钥文件，
   而不是 `git_ssh_key` 内嵌私钥。
 - URL 仓库需要 Docker 入口 clone；直接 `uv run bot.py` 时 `codex.repos` 只能用本地路径。
+- `cliproxyapi-config.yaml` 里也有 key（上游 key + 访问代理的客户端 key），同样勿提交到 Git。
 
 ## Codex CLI 诊断（可选，默认开启）
 
@@ -131,7 +146,10 @@ clone/pull 到 `codex.repos_dir`（默认 `/app/repos`）→ 生成去掉内嵌�
 **配置**（`config.yaml` 的 `codex` 一节）：
 
 - `repos`：诊断时 Codex 可访问的代码仓库列表。第一个为工作目录（`-C`），其余用
-  `--add-dir` 挂载。为空时回落到旧的 `repo.path`。
+  `--add-dir` 挂载。可空：不配时以当前工作目录（容器里是 `/app`）做工作区。
+- `model_providers`：模型提供方（`model_provider` 选一个，`model_providers.<id>` 里配
+  `base_url` / `env_key` / `wire_api` 等）。**必须用它**：实测 Codex 0.149 会忽略
+  `OPENAI_BASE_URL`、仍连 api.openai.com，光设 baseURL 不生效。
 - `mcp_servers`：辅助诊断的 MCP 服务器列表（Codex 原生支持），每项配 `name` /
   `command` / `args` / `env`。不需要就删掉整节。
 - `model`：留空用 Codex 默认模型；`reasoning_effort`：low / medium / high；
@@ -144,12 +162,13 @@ bash scripts/setup-codex.sh   # 检查 Node.js，npm install -g @openai/codex
 ```
 
 **认证**：Codex CLI 自己负责——`OPENAI_API_KEY` 环境变量（见 `.env.example`），
-或按 Codex 官方文档用 ChatGPT 登录。
+或按 Codex 官方文档用 ChatGPT 登录，或 `model_providers` 里 `env_key` /
+`experimental_bearer_token` 指定的凭据（如 CLIProxyAPI 的客户端 key）。
 
 **机器人怎么调它**：每次诊断生成临时 `CODEX_HOME`（不碰你的 `~/.codex`），
 里面只写本次的 `config.toml`（`approval_policy="never"`、`sandbox_mode="read-only"`、
 模型、MCP 服务器）；命令是
-`codex exec -C <主仓库> --add-dir <其他仓库> --output-last-message <临时文件> "<提示词>"`。
+`codex exec --skip-git-repo-check -C <主仓库> --add-dir <其他仓库> --output-last-message <临时文件> "<提示词>"`。
 机器人启动时若 `codex.enabled=true` 但找不到 `codex` 二进制，只记一条警告，
 不影响运行。
 

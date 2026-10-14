@@ -58,6 +58,38 @@ def test_build_codex_toml():
     assert "no-cmd" not in toml
 
 
+def test_build_codex_toml_model_providers():
+    toml = build_codex_toml(
+        {
+            "model": "kimi-k2",
+            "model_provider": "cliproxyapi",
+            "model_providers": {
+                "cliproxyapi": {
+                    "name": "cliproxyapi",
+                    "base_url": "http://cliproxyapi:8317/v1",
+                    "env_key": "CLIPROXYAPI_API_KEY",
+                    "wire_api": "responses",
+                    "requires_openai_auth": True,
+                    "model_catalog_url": "http://cliproxyapi:8317/v1/models",
+                    "http_headers": {"X-Custom": "1"},
+                },
+                "bad": "not-a-dict",  # 非 dict 的 provider 应被跳过
+                "": {"base_url": "http://x"},  # 空 id 应被跳过
+            },
+        }
+    )
+    assert 'model_provider = "cliproxyapi"' in toml
+    assert '[model_providers."cliproxyapi"]' in toml
+    assert 'base_url = "http://cliproxyapi:8317/v1"' in toml
+    assert 'env_key = "CLIPROXYAPI_API_KEY"' in toml
+    assert 'wire_api = "responses"' in toml
+    assert "requires_openai_auth = true" in toml
+    assert 'model_catalog_url = "http://cliproxyapi:8317/v1/models"' in toml
+    assert '"X-Custom" = "1"' in toml
+    assert "not-a-dict" not in toml
+    assert "http://x" not in toml
+
+
 def test_build_codex_toml_empty_model_omitted():
     toml = build_codex_toml({"model": "", "mcp_servers": []})
     assert "model =" not in toml
@@ -142,6 +174,73 @@ def test_diagnose_with_codex_fake_binary():
                 os.environ.pop("OPENAI_API_KEY", None)
             else:
                 os.environ["OPENAI_API_KEY"] = old_key
+
+
+def test_diagnose_with_codex_no_repos_uses_cwd():
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_fake_codex(tmp)
+        old_path = os.environ.get("PATH", "")
+        old_key = os.environ.get("OPENAI_API_KEY")
+        old_cwd = os.getcwd()
+        os.environ["PATH"] = tmp + os.pathsep + old_path
+        os.environ["OPENAI_API_KEY"] = "dummy-for-test"
+        os.chdir(tmp)  # repos 为空时应以当前工作目录做 Codex 工作区
+        try:
+            cfg = _cfg(tmp)
+            cfg["codex"]["repos"] = []
+            cfg["repo"] = {}
+            result = diagnose_with_codex("下单 500", cfg)
+            assert result == "FAKE 诊断结论：根因是假的", result
+            with open(os.path.join(tmp, "args.txt"), encoding="utf-8") as f:
+                args = f.read()
+            assert f"-C {tmp}" in args
+            assert "--skip-git-repo-check" in args
+        finally:
+            os.chdir(old_cwd)
+            os.environ["PATH"] = old_path
+            if old_key is None:
+                os.environ.pop("OPENAI_API_KEY", None)
+            else:
+                os.environ["OPENAI_API_KEY"] = old_key
+
+
+def test_diagnose_with_codex_model_provider_env_key_auth():
+    # model_providers 的 env_key 有值时，认证预检应通过（不需要 OPENAI_API_KEY）
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_fake_codex(tmp)
+        old_path = os.environ.get("PATH", "")
+        old_home = os.environ.get("HOME", "")
+        old_key = os.environ.get("OPENAI_API_KEY")
+        old_codex_home = os.environ.get("CODEX_HOME")
+        old_proxy_key = os.environ.get("CLIPROXYAPI_API_KEY")
+        os.environ["PATH"] = tmp + os.pathsep + old_path
+        os.environ["HOME"] = tmp  # 空 HOME，没有 .codex/auth.json
+        os.environ.pop("OPENAI_API_KEY", None)
+        os.environ.pop("CODEX_HOME", None)
+        os.environ["CLIPROXYAPI_API_KEY"] = "proxy-dummy"
+        try:
+            cfg = _cfg(tmp)
+            cfg["codex"]["model_provider"] = "cliproxyapi"
+            cfg["codex"]["model_providers"] = {
+                "cliproxyapi": {
+                    "base_url": "http://cliproxyapi:8317/v1",
+                    "env_key": "CLIPROXYAPI_API_KEY",
+                    "wire_api": "responses",
+                }
+            }
+            result = diagnose_with_codex("下单 500", cfg)
+            assert result == "FAKE 诊断结论：根因是假的", result
+        finally:
+            os.environ["PATH"] = old_path
+            os.environ["HOME"] = old_home
+            if old_key is not None:
+                os.environ["OPENAI_API_KEY"] = old_key
+            if old_codex_home is not None:
+                os.environ["CODEX_HOME"] = old_codex_home
+            if old_proxy_key is None:
+                os.environ.pop("CLIPROXYAPI_API_KEY", None)
+            else:
+                os.environ["CLIPROXYAPI_API_KEY"] = old_proxy_key
 
 
 def test_diagnose_with_codex_no_auth_fails_fast():

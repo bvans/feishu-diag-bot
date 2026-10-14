@@ -66,11 +66,25 @@ codex:
   timeout_seconds: 180  # Codex 单次诊断超时（秒）
   repos_dir: "/app/repos"  # Docker 入口 clone 仓库的目标目录（本地跑时可改成别的路径）
   # 诊断时 Codex 可访问的代码仓库：第一个为工作目录（-C），其余用 --add-dir 挂载。
-  # 可以是 git URL（Docker 入口会自动 clone；本地路径原样使用）：
+  # 可以是 git URL（Docker 入口会自动 clone；本地路径原样使用）。
+  # 可空：不配时以当前工作目录（容器里是 /app，镜像里已装好 Codex，可直接跑）做工作区。
   repos:
-    - "git@github.com:myorg/myapp.git"
-    - "https://github.com/myorg/shared-lib.git"
+    # - "git@github.com:myorg/myapp.git"
+    # - "https://github.com/myorg/shared-lib.git"
     # - "/opt/myapp"   # 本地已有 checkout 时可直接写路径，不 clone
+  # 模型提供方：Codex 只认 Responses 协议。光设 OPENAI_BASE_URL 不生效
+  #（实测 Codex 0.149 会忽略它、仍连 api.openai.com），必须用 model_providers 指过去。
+  # 用 CLIProxyAPI 做 Chat Completions -> Responses 转换时取消下面注释
+  #（compose 里已带 cliproxyapi 服务；model 填 CLIProxyAPI 侧暴露的模型别名）：
+  # model_provider: "cliproxyapi"
+  # model: "kimi-k2"
+  # model_providers:
+  #   cliproxyapi:
+  #     name: "cliproxyapi"
+  #     base_url: "http://cliproxyapi:8317/v1"  # compose 内服务名；本机直跑改成 127.0.0.1:8317
+  #     env_key: "CLIPROXYAPI_API_KEY"  # 从该环境变量读访问 CLIProxyAPI 的 key（.env 里填）
+  #     wire_api: "responses"
+  #     requires_openai_auth: true
   # 辅助诊断的 MCP 服务器（Codex 原生支持，command 需在 PATH 里）。
   # 不需要就删掉整个 mcp_servers 一节。
   mcp_servers:
