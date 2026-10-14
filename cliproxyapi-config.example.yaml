@@ -1,5 +1,5 @@
 # CLIProxyAPI 配置示例：复制为 cliproxyapi-config.yaml 后改成你自己的值。
-# 运行时挂载到业务容器的 /CLIProxyAPI/config.yaml（见 docker-compose.example.yml），不进镜像。
+# 运行时挂载到 cliproxyapi 容器的 /CLIProxyAPI/config.yaml（见 docker-compose.example.yml），不进镜像。
 # 完整字段说明见上游 config.example.yaml（router-for-me/CLIProxyAPI）。
 # 本文件只开最小可用集：客户端鉴权 + 一个 OpenAI 兼容上游。
 config-version: 8

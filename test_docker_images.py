@@ -1,6 +1,6 @@
-"""三层镜像结构单测：Dockerfile.base / Dockerfile / start.sh / compose / config 的分层约定。
+"""两容器部署结构单测：Dockerfile / compose / config 的分拆约定。
 
-不启动 Docker，只读文件断言关键行，防止分层约定被无意改坏。
+不启动 Docker，只读文件断言关键行，防止分拆约定被无意改坏。
 """
 
 import os
@@ -13,47 +13,45 @@ def _read(name):
         return f.read()
 
 
-def test_base_image_from_cliproxyapi_and_installs_codex():
-    dockerfile = _read("Dockerfile.base")
-    assert "eceasy/cli-proxy-api" in dockerfile, "二次基础镜像必须 FROM CLIProxyAPI 官方镜像"
-    assert "npm install -g @openai/codex" in dockerfile
-    assert "uv python install 3.12" in dockerfile
-    assert "nodejs" in dockerfile and "git" in dockerfile
-
-
-def test_business_image_from_base_and_bakes_repos():
+def test_business_image_from_uv_and_installs_codex():
     dockerfile = _read("Dockerfile")
-    assert "feishu-diag-base" in dockerfile, "业务镜像必须 FROM 二次基础镜像"
+    assert "ghcr.io/astral-sh/uv:python3.12" in dockerfile, "业务镜像 FROM uv 镜像"
+    assert "npm install -g @openai/codex" in dockerfile
     assert "bake_repos.py" in dockerfile, "业务镜像 build 时必须烘焙仓库"
-    assert 'ENTRYPOINT ["/app/start.sh"]' in dockerfile
-    assert "eceasy/cli-proxy-api" not in dockerfile, "业务镜像不应直接 FROM 代理镜像"
+    assert 'ENTRYPOINT ["uv", "run", "python", "entrypoint.py"]' in dockerfile
+    assert "eceasy/cli-proxy-api" not in dockerfile, "代理已拆出独立容器，不应进业务镜像"
 
 
-def test_start_sh_starts_proxy_then_bot():
-    start = _read("start.sh")
-    assert "./CLIProxyAPI" in start, "start.sh 必须启动 CLIProxyAPI"
-    assert "127.0.0.1:8317" in start, "start.sh 必须等 8317 就绪"
-    assert "uv run python entrypoint.py" in start
-    # 代理先于机器人启动：代理启动行在 entrypoint 行之前
-    assert start.index("./CLIProxyAPI") < start.index("entrypoint.py")
+def test_single_container_leftovers_are_gone():
+    assert not os.path.exists(os.path.join(ROOT, "Dockerfile.base")), "二次基础镜像已废弃"
+    assert not os.path.exists(os.path.join(ROOT, "start.sh")), "单容器启动脚本已废弃"
 
 
-def test_compose_single_service_and_mounts_proxy_config():
+def test_compose_two_services_and_pinned_proxy():
     compose = _read("docker-compose.example.yml")
-    assert "cliproxyapi:" not in compose, "代理已进业务镜像，不再有独立 sidecar 服务"
+    assert "cliproxyapi:" in compose
+    assert "feishu-diag-bot:" in compose
+    assert "eceasy/cli-proxy-api:v8.0.28" in compose, "代理镜像钉到 v8.0.28（与 config-version: 8 对得上）"
     assert "./cliproxyapi-config.yaml:/CLIProxyAPI/config.yaml" in compose
+    assert "depends_on:" in compose
 
 
-def test_config_points_to_localhost_proxy():
+def test_config_points_to_proxy_service():
     config = _read("config.example.yaml")
-    assert "http://127.0.0.1:8317/v1" in config
-    assert "http://cliproxyapi:8317" not in config, "代理已在同容器内，不再走 compose 服务名"
+    assert "http://cliproxyapi:8317/v1" in config
+    assert "http://127.0.0.1:8317/v1" not in config, "代理已拆出独立容器，bot 应走 compose 服务名"
 
 
-def test_build_script_builds_base_first():
+def test_build_script_builds_only_business_image():
     build = _read("scripts/build.sh")
-    assert build.index("Dockerfile.base") < build.index("feishu-diag-bot"), \
-        "build.sh 必须先构建二次基础镜像，再构建业务镜像"
+    assert "Dockerfile.base" not in build, "二次基础镜像已废弃，build.sh 不应再构建它"
+    assert "feishu-diag-bot" in build
+    assert "GIT_SSH_KEY" in build
+
+
+def test_proxy_pin_version_matches_config_version():
+    assert "config-version: 8" in _read("cliproxyapi-config.example.yaml")
+    assert "v6.0.0" not in _read("docker-compose.example.yml"), "禁止回落到 v6 占位"
 
 
 if __name__ == "__main__":
@@ -62,12 +60,3 @@ if __name__ == "__main__":
             fn()
             print(f"PASS {name}")
     print("ALL PASS")
-
-
-def test_proxy_pin_version_is_v8():
-    """钉版示例必须与 config-version: 8 对得上，禁止悄悄回落到 v6 占位。"""
-    for name in ("Dockerfile.base", "scripts/build.sh", "README.md"):
-        text = _read(name)
-        assert "eceasy/cli-proxy-api:v8.0.28" in text, f"{name} 里钉版示例不是 v8.0.28"
-        assert "v6.0.0" not in text, f"{name} 里还有过期的 v6.0.0 占位"
-    assert "config-version: 8" in _read("cliproxyapi-config.example.yaml")

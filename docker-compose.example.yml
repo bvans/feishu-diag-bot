@@ -1,20 +1,30 @@
 # 复制为 docker-compose.yml 后改成你自己的值。
-# 单容器：业务镜像里已含 CLIProxyAPI（二次基础镜像），start.sh 同时启动代理和机器人。
-# 先构建两层镜像：scripts/build.sh（私有仓库：GIT_SSH_KEY=./id_diag scripts/build.sh）
+# 两个容器：cliproxyapi（协议转换代理）+ feishu-diag-bot（机器人本体 + Codex）。
+# 业务镜像先构建：scripts/build.sh（私有仓库：GIT_SSH_KEY=./id_diag scripts/build.sh）
 services:
+  # CLIProxyAPI：把 Chat Completions 兼容端点转成 Codex 要的 Responses 协议。
+  # 不用它时（直连 OpenAI / ChatGPT 登录）删掉这个服务，并把 config.yaml 里
+  # codex.model_providers 改回直连或删掉。
+  cliproxyapi:
+    image: eceasy/cli-proxy-api:v8.0.28  # 与 cliproxyapi-config.yaml 的 config-version: 8 对得上
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8317:8317"  # 本机调试用；bot 走 compose 内网，不依赖这个映射
+    volumes:
+      - ./cliproxyapi-config.yaml:/CLIProxyAPI/config.yaml:ro
+      # OAuth 登录（Codex/Claude/Gemini 订阅）才需要持久化 auth 目录：
+      # - ./cliproxyapi-auths:/root/.cli-proxy-api
+      # 插件持久化：
+      # - ./cliproxyapi-plugins:/CLIProxyAPI/plugins
+
   feishu-diag-bot:
+    depends_on:
+      - cliproxyapi
     build: .
     image: feishu-diag-bot:latest
     restart: unless-stopped
     env_file:
       - .env   # FEISHU_APP_ID、FEISHU_APP_SECRET、GEMINI_API_KEY、OPENAI_API_KEY、CLIPROXYAPI_API_KEY
-    ports:
-      - "127.0.0.1:8317:8317"  # 本机调试用；bot 走 127.0.0.1，不依赖这个映射
     volumes:
       - ./config.yaml:/app/config.yaml:ro
-      - ./cliproxyapi-config.yaml:/CLIProxyAPI/config.yaml:ro  # 代理配置（含上游 key），运行时挂载，不进镜像
       - /var/log/myapp:/var/log/myapp:ro   # 机器人要读的日志（按 config.yaml 里的 logs 改）
-      # OAuth 登录（Codex/Claude/Gemini 订阅）才需要持久化 auth 目录：
-      # - ./cliproxyapi-auths:/root/.cli-proxy-api
-      # 插件持久化：
-      # - ./cliproxyapi-plugins:/CLIProxyAPI/plugins

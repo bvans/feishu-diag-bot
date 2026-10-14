@@ -68,13 +68,13 @@ codex:
   # 模型提供方：Codex 只认 Responses 协议。光设 OPENAI_BASE_URL 不生效
   #（实测 Codex 0.149 会忽略它、仍连 api.openai.com），必须用 model_providers 指过去。
   # 用 CLIProxyAPI 做 Chat Completions -> Responses 转换时取消下面注释
-  #（同一容器内由 start.sh 启动 CLIProxyAPI；model 填 CLIProxyAPI 侧暴露的模型别名）：
+  #（compose 里带 cliproxyapi 服务；model 填 CLIProxyAPI 侧暴露的模型别名）：
   # model_provider: "cliproxyapi"
   # model: "kimi-k2"
   # model_providers:
   #   cliproxyapi:
   #     name: "cliproxyapi"
-  #     base_url: "http://127.0.0.1:8317/v1"  # 同容器内的 CLIProxyAPI（start.sh 启动）
+  #     base_url: "http://cliproxyapi:8317/v1"  # compose 内服务名
   #     env_key: "CLIPROXYAPI_API_KEY"  # 从该环境变量读访问 CLIProxyAPI 的 key（.env 里填）
   #     wire_api: "responses"
   #     requires_openai_auth: true

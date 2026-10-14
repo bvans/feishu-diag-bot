@@ -87,16 +87,14 @@ WantedBy=multi-user.target
 
 ## Docker 部署（推荐）
 
-三层镜像，逐层往上封装：
+两个容器，各做一件事：
 
 ```
-eceasy/cli-proxy-api:latest            # 官方代理镜像（Responses <-> Chat Completions 转换）
-  └─ Dockerfile.base                    # 二次基础镜像 feishu-diag-base：+ Codex CLI + Python/Node 工具链
-      └─ Dockerfile                     # 业务镜像 feishu-diag-bot：Python 应用 + build 时烘焙诊断仓库
+cliproxyapi（eceasy/cli-proxy-api:v8.0.28）  # 协议转换代理：Chat Completions <-> Responses
+feishu-diag-bot（业务镜像）                    # Python 应用 + Codex CLI + build 时烘焙诊断仓库
 ```
 
-业务镜像初始化（build）时 `git clone` 你提供的仓库（`codex-repos.txt` 清单），
-烘焙进镜像；容器启动时不再 clone，内网可用。
+诊断仓库在 **build 时烘焙进业务镜像**，运行时不再联网 clone，内网可用。
 
 ```bash
 # 1. 准备配置和凭据
@@ -105,36 +103,30 @@ cp cliproxyapi-config.example.yaml cliproxyapi-config.yaml  # 填上游端点和
 cp .env.example .env                 # 填 FEISHU_APP_ID、FEISHU_APP_SECRET、CLIPROXYAPI_API_KEY 等
 # 诊断仓库清单（每行一个 git URL）：编辑 codex-repos.txt
 
-# 2. 构建两层镜像（先 base，后业务）
+# 2. 构建业务镜像（代理用官方镜像，不用构建）
 scripts/build.sh
 # 私有仓库：GIT_SSH_KEY=./id_diag scripts/build.sh（build 时传 SSH key，BuildKit secret，不进镜像层）
-# 把代理钉到具体版本：CLIPROXYAPI_IMAGE=eceasy/cli-proxy-api:v8.0.28 scripts/build.sh
 
-# 3. 启动（单容器，挂载配置 + 日志目录）
+# 3. 启动（两个容器）
 docker compose up -d
-# 或 docker run -d --name feishu-diag-bot --restart unless-stopped \
-#   --env-file .env \
-#   -v ./config.yaml:/app/config.yaml:ro \
-#   -v ./cliproxyapi-config.yaml:/CLIProxyAPI/config.yaml:ro \
-#   -v /var/log/myapp:/var/log/myapp:ro \
-#   feishu-diag-bot
 ```
 
-内网部署：有网的机器上 build 好后 `docker save feishu-diag-bot > bot.tar`，
-拷到内网机器 `docker load < bot.tar` 即可运行——业务镜像里已含一切，
-内网机器不需要二次基础镜像。运行时仍需访问飞书 API 和模型 API（或走代理/中转），
-但不再需要访问 git 仓库。
+内网部署：有网的机器上 build 好业务镜像后 `docker save feishu-diag-bot > bot.tar`，
+拷到内网机器 `docker load < bot.tar` 即可运行（代理镜像
+`eceasy/cli-proxy-api:v8.0.28` 同样需要 `docker save/load` 搬过去，或内网已有镜像仓库时
+直接拉取）。运行时仍需访问飞书 API 和模型 API（或走代理/中转），但不再需要访问 git 仓库。
 
-**启动流程**（单容器，`start.sh`）：启动 CLIProxyAPI（后台，等 8317 就绪）
-→ `entrypoint.py` 把 `config.yaml` 里 `codex.repos` 的 URL 映射到 build 时已烘焙的
-目录（`/app/repos/<目录>`，按镜像内 `.baked-manifest.json`）→ 生成有效配置 →
-启动 `bot.py`。本地路径的 repos 条目原样使用；URL 对应目录不存在时记警告并跳过，
-不阻止机器人启动。仓库更新靠重新 build（`scripts/build.sh` 会重新 clone 最新版）。
+**启动流程**（`entrypoint.py`）：把 `config.yaml` 里 `codex.repos` 的 URL
+映射到 build 时已烘焙的目录（`/app/repos/<目录>`，按镜像内
+`.baked-manifest.json`）→ 生成有效配置 → 启动 `bot.py`。本地路径的 repos 条目
+原样使用；URL 对应目录不存在时记警告并跳过，不阻止机器人启动。
+仓库更新靠重新 build（`scripts/build.sh` 会重新 clone 最新版）。
 
-**代理配置**：`cliproxyapi-config.yaml` 运行时挂载到 `/CLIProxyAPI/config.yaml`，
-不进镜像。`config.yaml` 里 `codex.model_providers` 指向同容器内的代理
-（`base_url: http://127.0.0.1:8317/v1`，`env_key: CLIPROXYAPI_API_KEY`）。
-不用代理时（直连 OpenAI / ChatGPT 登录）把 `model_providers` 改回直连或删掉。
+**代理配置**：`cliproxyapi-config.yaml` 运行时挂载到 cliproxyapi 容器的
+`/CLIProxyAPI/config.yaml`，不进镜像。`config.yaml` 里 `codex.model_providers`
+指向 compose 内的代理服务（`base_url: http://cliproxyapi:8317/v1`，
+`env_key: CLIPROXYAPI_API_KEY`）。不用代理时（直连 OpenAI / ChatGPT 登录）删掉
+cliproxyapi 服务，并把 `model_providers` 改回直连或删掉。
 
 **飞书凭据走环境变量**：`FEISHU_APP_ID` / `FEISHU_APP_SECRET` 在 `.env` 里填，
 环境变量优先于 `config.yaml` 里的 `feishu` 一节。
