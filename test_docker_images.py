@@ -62,3 +62,12 @@ if __name__ == "__main__":
             fn()
             print(f"PASS {name}")
     print("ALL PASS")
+
+
+def test_proxy_pin_version_is_v8():
+    """钉版示例必须与 config-version: 8 对得上，禁止悄悄回落到 v6 占位。"""
+    for name in ("Dockerfile.base", "scripts/build.sh", "README.md"):
+        text = _read(name)
+        assert "eceasy/cli-proxy-api:v8.0.28" in text, f"{name} 里钉版示例不是 v8.0.28"
+        assert "v6.0.0" not in text, f"{name} 里还有过期的 v6.0.0 占位"
+    assert "config-version: 8" in _read("cliproxyapi-config.example.yaml")

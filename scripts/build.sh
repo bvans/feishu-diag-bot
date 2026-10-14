@@ -3,7 +3,7 @@
 # 用法：
 #   scripts/build.sh                                    # 公开仓库
 #   GIT_SSH_KEY=./id_diag scripts/build.sh              # 私有仓库（build 时传 SSH key，不进镜像层）
-#   CLIPROXYAPI_IMAGE=eceasy/cli-proxy-api:v6.0.0 scripts/build.sh  # 把代理钉到具体版本
+#   CLIPROXYAPI_IMAGE=eceasy/cli-proxy-api:v8.0.28 scripts/build.sh  # 把代理钉到具体版本
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

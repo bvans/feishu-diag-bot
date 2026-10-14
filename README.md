@@ -108,7 +108,7 @@ cp .env.example .env                 # 填 FEISHU_APP_ID、FEISHU_APP_SECRET、C
 # 2. 构建两层镜像（先 base，后业务）
 scripts/build.sh
 # 私有仓库：GIT_SSH_KEY=./id_diag scripts/build.sh（build 时传 SSH key，BuildKit secret，不进镜像层）
-# 把代理钉到具体版本：CLIPROXYAPI_IMAGE=eceasy/cli-proxy-api:v6.0.0 scripts/build.sh
+# 把代理钉到具体版本：CLIPROXYAPI_IMAGE=eceasy/cli-proxy-api:v8.0.28 scripts/build.sh
 
 # 3. 启动（单容器，挂载配置 + 日志目录）
 docker compose up -d

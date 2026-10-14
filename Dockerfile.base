@@ -1,7 +1,7 @@
 # 二次基础镜像：CLIProxyAPI（官方镜像）+ Codex CLI + Python/Node 工具链。
 # 业务镜像 FROM 本镜像即可，不用再装代理和 Codex。
 # 构建：scripts/build.sh（或 docker build -f Dockerfile.base -t feishu-diag-base:latest .）
-# 钉代理版本：docker build --build-arg CLIPROXYAPI_IMAGE=eceasy/cli-proxy-api:v6.0.0 -f Dockerfile.base ...
+# 钉代理版本：docker build --build-arg CLIPROXYAPI_IMAGE=eceasy/cli-proxy-api:v8.0.28 -f Dockerfile.base ...
 ARG CLIPROXYAPI_IMAGE=eceasy/cli-proxy-api:latest
 FROM ${CLIPROXYAPI_IMAGE}
 
