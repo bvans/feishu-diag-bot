@@ -26,16 +26,51 @@ repo:
   path: "/opt/myapp"
   include_ext: [".py", ".go", ".js", ".ts", ".java"]
 
+# Git 仓库 SSH key（二选一；都不配时用容器内已有 ~/.ssh，或只用 HTTPS 仓库）。
+# 警告：git_ssh_key 内嵌的是私钥，勿提交到 Git！推荐用 git_ssh_key_file 挂载密钥文件。
+# git_ssh_key: |
+#   -----BEGIN OPENSSH PRIVATE KEY-----
+#   ...
+#   -----END OPENSSH PRIVATE KEY-----
+git_ssh_key_file: ""   # 如 /run/secrets/git_ssh_key（docker run -v 挂载，或 compose secrets）
+
+# 提示词组成：留空用内置模板；想自定义时取消下面 template 的注释，按需改写。
+# 可用占位符：{issue} {time} {version} {env} {request_id} {repos} {logs}
+prompt:
+  template: ""
+  # template: |
+  #   你是一名资深值班工程师。测试人员反馈了一个线上问题，请结合代码仓库、
+  #   服务器日志和可用的 MCP 工具自主查证，给出诊断结论。
+  #   【问题反馈】
+  #   {issue}
+  #   【已知信息】
+  #   - 时间：{time}
+  #   - 版本：{version}
+  #   - 环境：{env}
+  #   - 请求 ID：{request_id}
+  #   【代码仓库】
+  #   {repos}
+  #   【服务器日志文件】
+  #   {logs}
+  #   【要求】
+  #   1. 只查、不改：不要修改任何文件，不要执行写操作，不要向线上服务发请求。
+  #   2. 证据必须注明出处（文件:行号、日志行、MCP 工具返回）。
+  #   3. 输出结构：根因 / 证据 / 修复建议（按优先级）/ 置信度（高/中/低 + 理由）/ 还需要的信息。
+  #   4. 证据不足时明确说证据不足，不要编造根因。
+
 # Codex CLI 诊断：启用后诊断走 Codex CLI；未启用 / 未安装 / 失败时自动兜底快速通道。
 codex:
   enabled: true
   model: ""   # 留空用 Codex 默认模型；想固定时填如 gpt-5.3-codex
   reasoning_effort: "medium"  # low / medium / high；留空用 Codex 默认
   timeout_seconds: 180  # Codex 单次诊断超时（秒）
+  repos_dir: "/app/repos"  # Docker 入口 clone 仓库的目标目录（本地跑时可改成别的路径）
   # 诊断时 Codex 可访问的代码仓库：第一个为工作目录（-C），其余用 --add-dir 挂载。
+  # 可以是 git URL（Docker 入口会自动 clone；本地路径原样使用）：
   repos:
-    - "/opt/myapp"
-    - "/opt/myapp-shared-lib"
+    - "git@github.com:myorg/myapp.git"
+    - "https://github.com/myorg/shared-lib.git"
+    # - "/opt/myapp"   # 本地已有 checkout 时可直接写路径，不 clone
   # 辅助诊断的 MCP 服务器（Codex 原生支持，command 需在 PATH 里）。
   # 不需要就删掉整个 mcp_servers 一节。
   mcp_servers:

@@ -124,7 +124,9 @@ def test_diagnose_with_codex_fake_binary():
         os.makedirs(repo2)
         _write_fake_codex(tmp)
         old_path = os.environ.get("PATH", "")
+        old_key = os.environ.get("OPENAI_API_KEY")
         os.environ["PATH"] = tmp + os.pathsep + old_path
+        os.environ["OPENAI_API_KEY"] = "dummy-for-test"  # 认证预检需要 key（假二进制不真调 API）
         try:
             cfg = _cfg(repo)
             cfg["codex"]["repos"] = [repo, repo2]
@@ -136,6 +138,38 @@ def test_diagnose_with_codex_fake_binary():
             assert "--output-last-message" in args
         finally:
             os.environ["PATH"] = old_path
+            if old_key is None:
+                os.environ.pop("OPENAI_API_KEY", None)
+            else:
+                os.environ["OPENAI_API_KEY"] = old_key
+
+
+def test_diagnose_with_codex_no_auth_fails_fast():
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_fake_codex(tmp)  # 二进制存在，但无认证 -> 应在启动前快速失败，不等 timeout
+        old_path = os.environ.get("PATH", "")
+        old_home = os.environ.get("HOME", "")
+        old_key = os.environ.get("OPENAI_API_KEY")
+        old_codex_home = os.environ.get("CODEX_HOME")
+        os.environ["PATH"] = tmp + os.pathsep + old_path
+        os.environ["HOME"] = tmp  # 空 HOME，没有 .codex/auth.json
+        os.environ.pop("OPENAI_API_KEY", None)
+        os.environ.pop("CODEX_HOME", None)
+        try:
+            cfg = _cfg(tmp)
+            try:
+                diagnose_with_codex("下单 500", cfg)
+            except CodexError as e:
+                assert "未认证" in str(e)
+            else:
+                raise AssertionError("无认证时应抛 CodexError")
+        finally:
+            os.environ["PATH"] = old_path
+            os.environ["HOME"] = old_home
+            if old_key is not None:
+                os.environ["OPENAI_API_KEY"] = old_key
+            if old_codex_home is not None:
+                os.environ["CODEX_HOME"] = old_codex_home
 
 
 def test_diagnose_with_codex_missing_binary():
@@ -159,6 +193,24 @@ def test_diagnose_falls_back_when_codex_missing():
         # Codex 缺失 -> 兜底快速通道；LLM 指向不可达地址 -> 降级结论，不抛异常
         result = diagnose("下单接口 500，15:04，版本 v1.2.3", cfg)
         assert isinstance(result, str) and "根因" in result, result
+
+
+def test_build_prompt_uses_template():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        cfg["prompt"] = {"template": "问题：{issue}\n时间：{time}\n版本：{version}\n仓库：\n{repos}\n日志：\n{logs}"}
+        prompt = build_prompt("下单 500，15:04，版本 v1.2.3，request_id=abc123", cfg)
+        assert prompt.startswith("问题：下单 500")
+        assert "15:04" in prompt and "v1.2.3" in prompt
+        assert tmp in prompt and "/var/log/myapp/api.log" in prompt
+        assert "只查、不改" not in prompt  # 模板接管，不含内置要求
+
+
+def test_build_prompt_empty_template_falls_back():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        cfg["prompt"] = {"template": "   "}
+        assert "只查、不改" in build_prompt("下单 500，15:04，版本 v1.2.3", cfg)
 
 
 if __name__ == "__main__":

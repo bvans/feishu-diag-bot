@@ -85,6 +85,44 @@ WantedBy=multi-user.target
 
 `.env` 里放三个环境变量（`FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`GEMINI_API_KEY`）。
 
+## Docker 部署（推荐）
+
+打成镜像，一份配置文件传入：git 仓库地址、MCP 配置、git SSH 密钥、提示词。
+
+```bash
+# 1. 准备配置和凭据
+cp config.example.yaml config.yaml   # 改成你的：仓库地址、MCP、提示词
+cp .env.example .env                 # 填 FEISHU_APP_ID、FEISHU_APP_SECRET、OPENAI_API_KEY 等
+
+# 2. 构建镜像
+docker build -t feishu-diag-bot .
+
+# 3. 启动（挂载配置 + 日志目录；config.yaml 里 git_ssh_key_file 指向的密钥也要挂载）
+docker run -d --name feishu-diag-bot --restart unless-stopped \
+  --env-file .env \
+  -v ./config.yaml:/app/config.yaml:ro \
+  -v /var/log/myapp:/var/log/myapp:ro \
+  feishu-diag-bot
+```
+
+或用 compose（`cp docker-compose.example.yml docker-compose.yml` 后改）：
+
+```bash
+docker compose up -d --build
+```
+
+**启动流程**（`entrypoint.py`）：配好 SSH key → 把 `codex.repos` 里的 git URL
+clone/pull 到 `codex.repos_dir`（默认 `/app/repos`）→ 生成去掉内嵌密钥的有效配置 →
+以该配置启动 `bot.py`。本地路径的 repos 条目不 clone，原样使用；单个仓库 clone
+失败只记警告，不阻止机器人启动。
+
+**安全注意**：
+
+- `config.yaml` / `.env` 不进镜像（`.dockerignore` 已排除），只在运行时挂载。
+- 含私钥的 `config.yaml` 勿提交到 Git；推荐用 `git_ssh_key_file` 挂载密钥文件，
+  而不是 `git_ssh_key` 内嵌私钥。
+- URL 仓库需要 Docker 入口 clone；直接 `uv run bot.py` 时 `codex.repos` 只能用本地路径。
+
 ## Codex CLI 诊断（可选，默认开启）
 
 `config.yaml` 里 `codex.enabled=true` 时，诊断走 Codex CLI；未安装 / 失败 / 超时时

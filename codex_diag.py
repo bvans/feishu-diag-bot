@@ -84,6 +84,20 @@ def build_prompt(issue_text: str, cfg: dict) -> str:
     repos = resolve_repos(codex_cfg, cfg)
     log_paths = [str(x.get("path", "")) for x in (cfg.get("logs") or []) if x.get("path")]
 
+    template = ((cfg.get("prompt") or {}).get("template") or "").strip()
+    if template:
+        repos_text = "\n".join(f"- {p}" for p in repos) if repos else "（未配置仓库，只能按问题描述分析）"
+        logs_text = "\n".join(f"- {p}" for p in log_paths) if log_paths else "（未配置日志文件）"
+        return (
+            template.replace("{issue}", issue_text)
+            .replace("{time}", slots.get("time") or "未提供")
+            .replace("{version}", slots.get("version") or "未提供")
+            .replace("{env}", slots.get("env") or "未提供")
+            .replace("{request_id}", slots.get("request_id") or "未提供")
+            .replace("{repos}", repos_text)
+            .replace("{logs}", logs_text)
+        )
+
     lines = [
         "你是一名资深值班工程师。测试人员反馈了一个线上问题，请你结合代码仓库、"
         "服务器日志和可用的 MCP 工具自主查证，给出诊断结论。",
@@ -149,19 +163,40 @@ def diagnose_with_codex(issue_text: str, cfg: dict) -> str:
     if not repos:
         raise CodexError("codex.repos 为空且无可用仓库，未配置诊断仓库")
 
+    # 认证预检：无 key、无登录时 codex exec 会一直等待而不是快速失败，
+    # 必须在启动前拦住（不要等到 timeout 才兜底）。
+    merged_env = dict(os.environ)
+    merged_env.update({str(k): str(v) for k, v in (codex_cfg.get("env") or {}).items()})
+    auth_src = os.path.join(
+        os.environ.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex"),
+        "auth.json",
+    )
+    has_key = bool(merged_env.get("OPENAI_API_KEY"))
+    has_login = os.path.isfile(auth_src)
+    if not has_key and not has_login:
+        raise CodexError(
+            "Codex 未认证：请设置 OPENAI_API_KEY，或用 ChatGPT 登录 Codex（否则 codex exec 会一直等待）"
+        )
+
     timeout = int(codex_cfg.get("timeout_seconds") or DEFAULT_TIMEOUT_SECONDS)
     with tempfile.TemporaryDirectory(prefix="feishu-diag-codex-") as tmp:
         codex_home = os.path.join(tmp, "codex-home")
         os.makedirs(codex_home, exist_ok=True)
+        os.chmod(codex_home, 0o700)
         build_codex_home(codex_cfg, codex_home)
+        if has_login:
+            # ChatGPT 登录的凭据在 ~/.codex/auth.json；临时 CODEX_HOME 里也要有一份，
+            # 否则 Codex 找不到登录状态。诊断完随临时目录删掉。
+            auth_dst = os.path.join(codex_home, "auth.json")
+            shutil.copyfile(auth_src, auth_dst)
+            os.chmod(auth_dst, 0o600)
         out_file = os.path.join(tmp, "final.md")
         cmd = [binary_path, "exec", "-C", repos[0]]
         for extra in repos[1:]:
             cmd += ["--add-dir", extra]
         cmd += ["--output-last-message", out_file, build_prompt(issue_text, cfg)]
-        env = dict(os.environ)
+        env = dict(merged_env)
         env["CODEX_HOME"] = codex_home
-        env.update({str(k): str(v) for k, v in (codex_cfg.get("env") or {}).items()})
         log.info("codex exec 启动：主仓库=%s 附加仓库=%d 超时=%ss", repos[0], len(repos) - 1, timeout)
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)

@@ -1,0 +1,13 @@
+# 复制为 docker-compose.yml 后改成你自己的值。
+services:
+  feishu-diag-bot:
+    build: .
+    image: feishu-diag-bot:latest
+    restart: unless-stopped
+    env_file:
+      - .env   # FEISHU_APP_ID、FEISHU_APP_SECRET、GEMINI_API_KEY、OPENAI_API_KEY
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - /var/log/myapp:/var/log/myapp:ro   # 机器人要读的日志（按 config.yaml 里的 logs 改）
+      # 私有仓库的 SSH key（config.yaml 里 git_ssh_key_file 指向容器内路径）：
+      # - ./id_diag:/run/secrets/git_ssh_key:ro
