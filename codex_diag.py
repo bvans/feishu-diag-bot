@@ -10,8 +10,13 @@
   优先读它）。临时 CODEX_HOME 是新建的，所以挂载的全局文件需由机器人拷进去
   （codex.agents_md_file）或用内联文本（codex.agents_md）。仓库根目录的
   AGENTS.md 由 Codex 自动从仓库里加载，不用机器人处理。
-- 只查不改：config.toml 里 approval_policy="never"、sandbox_mode="read-only"，
-  Codex 只能读、不能改文件、不能弹授权框。
+- 只查不改：config.toml 里 approval_policy="never"，Codex 不能弹授权框；
+  sandbox_mode 可配（codex.sandbox_mode），默认 "read-only"。
+  容器里必须用 "danger-full-access"：Codex 的 Linux 沙箱用 bubblewrap（bwrap），
+  要建 user namespace，而 Docker 容器默认没有 CAP_SYS_ADMIN、宿主也常禁非特权
+  userns，bwrap 直接起不来，Codex 一个命令都执行不了。danger-full-access 关掉
+  Codex 沙箱，隔离改由容器本身提供；approval_policy="never" 仍在，会自动拒绝
+  需审批的动作（写文件、装包、联网等），提示词里也有“只查、不改”。
 - 失败不丢诊断：codex 二进制缺失 / 超时 / 非零退出 / 无输出时抛 CodexError，
   由 diagnose.py 兜底走内置快速通道（正则 + grep + 一次 LLM 调用）。
 - 认证：Codex CLI 自己负责（OPENAI_API_KEY 环境变量、ChatGPT 登录，
@@ -42,12 +47,19 @@ def _toml_str(value) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
+
+
 def build_codex_toml(codex_cfg: dict) -> str:
     """生成 Codex config.toml 文本：模型、沙箱、审批策略、MCP 服务器。"""
+    sandbox = (codex_cfg.get("sandbox_mode") or "read-only").strip()
+    if sandbox not in SANDBOX_MODES:
+        log.warning("codex.sandbox_mode 非法（%s），回落到 read-only", sandbox)
+        sandbox = "read-only"
     lines = [
         "# 由 feishu-diag-bot 生成（临时 CODEX_HOME），不要手改。",
         'approval_policy = "never"',
-        'sandbox_mode = "read-only"',
+        f"sandbox_mode = {_toml_str(sandbox)}",
     ]
     model = (codex_cfg.get("model") or "").strip()
     if model:

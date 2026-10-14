@@ -91,6 +91,16 @@ def test_build_codex_toml_model_providers():
     assert "http://x" not in toml
 
 
+def test_build_codex_toml_sandbox_mode():
+    # 显式配置
+    assert 'sandbox_mode = "danger-full-access"' in build_codex_toml(
+        {"sandbox_mode": "danger-full-access"})
+    # 默认 read-only
+    assert 'sandbox_mode = "read-only"' in build_codex_toml({})
+    # 非法值回落 read-only
+    assert 'sandbox_mode = "read-only"' in build_codex_toml({"sandbox_mode": "bogus"})
+
+
 def test_build_codex_toml_empty_model_omitted():
     toml = build_codex_toml({"model": "", "mcp_servers": []})
     assert "model =" not in toml

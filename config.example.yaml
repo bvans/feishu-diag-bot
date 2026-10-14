@@ -56,6 +56,14 @@ codex:
   model: ""   # 留空用 Codex 默认模型；想固定时填如 gpt-5.3-codex
   reasoning_effort: "medium"  # low / medium / high；留空用 Codex 默认
   timeout_seconds: 180  # Codex 单次诊断超时（秒）
+  # 沙箱模式：read-only / workspace-write / danger-full-access。
+  # 容器部署必须用 danger-full-access：Codex 沙箱用 bubblewrap（bwrap），要建 user
+  # namespace，容器里起不来（bwrap: No permissions to create a new namespace），
+  # Codex 一个命令都执行不了。关掉 Codex 沙箱后，隔离由容器本身提供；
+  # approval_policy="never" 仍在，会自动拒绝需审批的动作（写文件、装包、联网等）。
+  # 想保留 Codex 沙箱时，改宿主机：sysctl kernel.unprivileged_userns_clone=1，
+  # 或容器加 --cap-add=SYS_ADMIN（权限更大，不推荐）。
+  sandbox_mode: "danger-full-access"
   repos_dir: "/app/repos"  # build 时烘焙仓库的目标目录（bake_repos.py --repos-dir）
   # 诊断时 Codex 可访问的代码仓库：第一个为工作目录（-C），其余用 --add-dir 挂载。
   # 可以写 git URL：build 时按 codex-repos.txt 烘焙进镜像，启动时映射到已烘焙目录，

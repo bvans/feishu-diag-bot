@@ -132,19 +132,9 @@ push 到 main（改了 `Dockerfile` / `*.py` / `codex-repos.txt` 等镜像相关
 打 `v*` tag / 手动触发（Actions → Run workflow）时，先跑全部单测，通过后构建
 业务镜像并推送到 GHCR：`ghcr.io/bvans/feishu-diag-bot:latest`（另有 `sha-<短提交>`
 和 tag 对应的 `1.2.3` / `1.2` 标签）。PR 只构建不推送。
-`latest` 仅随 main 更新；手动运行时选择 main 才会发布，其他分支只验证构建。
-PR 和非发布分支不烘焙诊断仓库，也不会注入 `GIT_SSH_KEY`；正式发布才按
-`codex-repos.txt` 拉取诊断仓库。每次 CI 构建都会重新拉取，避免镜像复用旧仓库内容。
-含私有诊断代码的构建层不上传 Actions 缓存。
 私有诊断仓库需在仓库 Settings → Secrets → Actions 里加 `GIT_SSH_KEY`
 （只读 deploy key 的私钥，build 时经 BuildKit secret 传入，不进镜像层）；
 公开仓库（https URL）不用配。
-
-仓库需要启用 Actions，并允许 workflow 使用 `GITHUB_TOKEN` 写入 Packages；
-workflow 已为发布任务声明 `packages: write`，不需要额外配置 GHCR PAT。
-首次发布后确认 GHCR 包的可见性和仓库访问权限；镜像包含烘焙的诊断代码，
-私有代码对应的包应保持私有。部署机读取私有包仍需用 `read:packages` 凭据登录。
-公司代理、公司 CA 和运行时 LLM / 飞书凭据由部署环境提供，不放入公共 CI workflow。
 
 **代理配置**：`cliproxyapi-config.yaml` 运行时挂载到 cliproxyapi 容器的
 `/CLIProxyAPI/config.yaml`，不进镜像。`config.yaml` 里 `codex.model_providers`
@@ -223,6 +213,8 @@ uv run python admin.py [配置目录]   # 默认当前目录，打开 http://127
   `command` / `args` / `env`。不需要就删掉整节。
 - `model`：留空用 Codex 默认模型；`reasoning_effort`：low / medium / high；
   `timeout_seconds`：单次诊断超时（默认 180 秒）。
+- `sandbox_mode`：Codex 沙箱。容器部署用 `danger-full-access`（见下），
+  本机直接跑用默认 `read-only`。
 
 **安装**：
 
@@ -242,9 +234,21 @@ bash scripts/setup-codex.sh   # 检查 Node.js，npm install -g @openai/codex
 或按 Codex 官方文档用 ChatGPT 登录，或 `model_providers` 里 `env_key` /
 `experimental_bearer_token` 指定的凭据（如 CLIProxyAPI 的客户端 key）。
 
+**沙箱在容器里起不来（bwrap）**：Codex 的 Linux 沙箱用 bubblewrap（`bwrap`），
+要建 user namespace；而 Docker 容器默认没有 `CAP_SYS_ADMIN`、宿主也常禁非特权
+userns，于是 `bwrap: No permissions to create a new namespace`，Codex 一个命令
+都执行不了，诊断只能拿到一段“我什么都没查到”的报错。修法二选一：
+- 容器部署（推荐）：`codex.sandbox_mode: "danger-full-access"`，关掉 Codex 沙箱，
+  隔离改由容器本身提供。`approval_policy="never"` 仍在，会自动拒绝需审批的动作
+  （写文件、装包、联网等），提示词里也有“只查、不改”。
+- 想保留 Codex 沙箱：宿主机 `sysctl kernel.unprivileged_userns_clone=1`，
+  或容器加 `--cap-add=SYS_ADMIN`（权限更大，不推荐），然后 `sandbox_mode` 保持
+  `read-only`。注意 `approval_policy is Never` 时 Codex 不会申请提权，提权通道
+  不可用，别指望它自己升级权限。
+
 **机器人怎么调它**：每次诊断生成临时 `CODEX_HOME`（不碰你的 `~/.codex`），
-里面只写本次的 `config.toml`（`approval_policy="never"`、`sandbox_mode="read-only"`、
-模型、MCP 服务器）；命令是
+里面只写本次的 `config.toml`（`approval_policy="never"`、`sandbox_mode`（默认
+`read-only`，容器部署用 `danger-full-access`）、模型、MCP 服务器）；命令是
 `codex exec --skip-git-repo-check -C <主仓库> --add-dir <其他仓库> --output-last-message <临时文件> "<提示词>"`。
 机器人启动时若 `codex.enabled=true` 但找不到 `codex` 二进制，只记一条警告，
 不影响运行。
