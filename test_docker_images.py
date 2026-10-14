@@ -84,6 +84,84 @@ def test_proxy_pin_version_matches_config_version():
     assert "v6.0.0" not in _read("docker-compose.example.yml"), "禁止回落到 v6 占位"
 
 
+def _workflow():
+    import yaml
+
+    return yaml.safe_load(_read(".github/workflows/docker-build.yml"))
+
+
+def test_workflow_tests_fail_fast_before_image_build():
+    data = _workflow()
+    assert data["permissions"] == {"contents": "read"}
+    assert data["jobs"]["build"]["needs"] == "test"
+    steps = data["jobs"]["test"]["steps"]
+    runs = "\n".join(step.get("run", "") for step in steps)
+    assert "uv sync" in runs
+    assert "set -euo pipefail" in runs
+    assert 'uv run python "$test_file"' in runs
+    assert "test_*.py" in runs
+
+
+def test_workflow_only_publishes_and_exposes_ssh_key_on_release_refs():
+    steps = _workflow()["jobs"]["build"]["steps"]
+    login = next(s for s in steps if "docker/login-action@" in s.get("uses", ""))
+    build = next(s for s in steps if "docker/build-push-action@" in s.get("uses", ""))
+    release_guard = login["if"]
+    assert "github.event_name != 'pull_request'" in release_guard
+    assert "github.ref == 'refs/heads/main'" in release_guard
+    assert "startsWith(github.ref, 'refs/tags/v')" in release_guard
+    assert build["with"]["push"] == "${{ " + release_guard + " }}"
+    assert release_guard + " && secrets.GIT_SSH_KEY || ''" in build["with"]["secrets"]
+    assert "secrets.GITHUB_TOKEN" in login["with"]["password"]
+    assert all(s.get("with", {}).get("persist-credentials") is False
+               for s in steps if s.get("uses", "").startswith("actions/checkout@"))
+
+
+def test_pr_builds_cannot_bake_or_restore_private_repositories():
+    steps = _workflow()["jobs"]["build"]["steps"]
+    skip = next(s for s in steps if "Path('codex-repos.txt').write_text('')" in s.get("run", ""))
+    assert "github.event_name == 'pull_request'" in skip["if"]
+    build = next(s for s in steps if "docker/build-push-action@" in s.get("uses", ""))
+    assert steps.index(skip) < steps.index(build)
+    assert build["with"]["context"] == ".", "使用 checkout 后已清空仓库清单的上下文"
+    assert "cache-to" not in build["with"], "不把烘焙的私有代码放入 PR 可读取的 Actions 缓存"
+    assert "cache-from" not in build["with"]
+
+
+def test_workflow_triggers_version_tags_and_keeps_latest_on_main():
+    data = _workflow()
+    triggers = data.get("on") or data[True]
+    assert triggers["push"]["branches"] == ["main"]
+    assert triggers["push"]["tags"] == ["v*"]
+    assert ".github/workflows/docker-build.yml" in triggers["push"]["paths"]
+    meta = next(s for s in data["jobs"]["build"]["steps"]
+                if "docker/metadata-action@" in s.get("uses", ""))
+    assert meta["with"]["flavor"] == "latest=false"
+    assert "value=latest,enable=${{ github.ref == 'refs/heads/main' }}" in meta["with"]["tags"]
+    assert "type=sha,prefix=sha-" in meta["with"]["tags"]
+    assert "type=semver,pattern={{version}}" in meta["with"]["tags"]
+    assert "type=semver,pattern={{major}}.{{minor}}" in meta["with"]["tags"]
+
+
+def test_bake_uses_installed_dependencies_and_refreshes_for_each_ci_build():
+    dockerfile = _read("Dockerfile")
+    assert "/app/.venv/bin/python bake_repos.py" in dockerfile
+    assert "python3 bake_repos.py" not in dockerfile
+    assert "ARG REPOS_CACHE_BUST" in dockerfile
+    steps = _workflow()["jobs"]["build"]["steps"]
+    build = next(s for s in steps if "docker/build-push-action@" in s.get("uses", ""))
+    assert "REPOS_CACHE_BUST=${{ github.run_id }}-${{ github.run_attempt }}" in build["with"]["build-args"]
+
+
+def test_local_credentials_are_excluded_from_build_context():
+    patterns = _read(".dockerignore").splitlines()
+    assert ".env*" in patterns
+    assert "!.env.example" in patterns
+    assert "config.yaml" in patterns
+    assert "cliproxyapi-config.yaml" in patterns
+    assert ".local-tmp/" in patterns
+
+
 if __name__ == "__main__":
     for name, fn in sorted(list(globals().items())):
         if name.startswith("test_") and callable(fn):

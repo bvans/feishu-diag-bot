@@ -132,9 +132,19 @@ push 到 main（改了 `Dockerfile` / `*.py` / `codex-repos.txt` 等镜像相关
 打 `v*` tag / 手动触发（Actions → Run workflow）时，先跑全部单测，通过后构建
 业务镜像并推送到 GHCR：`ghcr.io/bvans/feishu-diag-bot:latest`（另有 `sha-<短提交>`
 和 tag 对应的 `1.2.3` / `1.2` 标签）。PR 只构建不推送。
+`latest` 仅随 main 更新；手动运行时选择 main 才会发布，其他分支只验证构建。
+PR 和非发布分支不烘焙诊断仓库，也不会注入 `GIT_SSH_KEY`；正式发布才按
+`codex-repos.txt` 拉取诊断仓库。每次 CI 构建都会重新拉取，避免镜像复用旧仓库内容。
+含私有诊断代码的构建层不上传 Actions 缓存。
 私有诊断仓库需在仓库 Settings → Secrets → Actions 里加 `GIT_SSH_KEY`
 （只读 deploy key 的私钥，build 时经 BuildKit secret 传入，不进镜像层）；
 公开仓库（https URL）不用配。
+
+仓库需要启用 Actions，并允许 workflow 使用 `GITHUB_TOKEN` 写入 Packages；
+workflow 已为发布任务声明 `packages: write`，不需要额外配置 GHCR PAT。
+首次发布后确认 GHCR 包的可见性和仓库访问权限；镜像包含烘焙的诊断代码，
+私有代码对应的包应保持私有。部署机读取私有包仍需用 `read:packages` 凭据登录。
+公司代理、公司 CA 和运行时 LLM / 飞书凭据由部署环境提供，不放入公共 CI workflow。
 
 **代理配置**：`cliproxyapi-config.yaml` 运行时挂载到 cliproxyapi 容器的
 `/CLIProxyAPI/config.yaml`，不进镜像。`config.yaml` 里 `codex.model_providers`

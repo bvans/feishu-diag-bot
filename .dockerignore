@@ -2,5 +2,10 @@
 __pycache__/
 .git/
 config.yaml
-.env
+.env*
+!.env.example
+cliproxyapi-config.yaml
+docker-compose.local.yml
+.local-tmp/
+.venv-cache/
 *.pyc

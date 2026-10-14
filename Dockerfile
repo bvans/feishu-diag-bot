@@ -22,8 +22,10 @@ COPY scripts/ ./scripts/
 #   docker build --secret id=git_ssh_key,src=./id_diag .
 # 公开仓库不需要 secret。clone 失败即 build 失败，不生成缺仓库的镜像。
 COPY codex-repos.txt ./
+# CI 每次运行刷新诊断仓库，不复用旧 clone；依赖安装层仍可缓存。
+ARG REPOS_CACHE_BUST=local
 RUN --mount=type=secret,id=git_ssh_key,required=false \
-    python3 bake_repos.py --repos-file codex-repos.txt --repos-dir /app/repos
+    /app/.venv/bin/python bake_repos.py --repos-file codex-repos.txt --repos-dir /app/repos
 
 # entrypoint.py：生成有效配置（URL -> 已烘焙目录）-> 启动 bot.py
 ENTRYPOINT ["uv", "run", "python", "entrypoint.py"]
