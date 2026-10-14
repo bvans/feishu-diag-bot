@@ -87,23 +87,31 @@ WantedBy=multi-user.target
 
 ## Docker 部署（推荐）
 
-打成镜像，一份配置文件传入：git 仓库地址、MCP 配置、git SSH 密钥、提示词。
+诊断仓库在 **build 时烘焙进镜像**，运行时不再联网 clone，内网可用。
+一份配置文件传入：git 仓库地址、MCP 配置、提示词。
 
 ```bash
 # 1. 准备配置和凭据
 cp config.example.yaml config.yaml   # 改成你的：仓库地址、MCP、提示词
 cp .env.example .env                 # 填 FEISHU_APP_ID、FEISHU_APP_SECRET、OPENAI_API_KEY 等
+# 诊断仓库清单（每行一个 git URL）：编辑 codex-repos.txt
 
-# 2. 构建镜像
+# 2. 构建镜像（公开仓库）
 docker build -t feishu-diag-bot .
+# 私有仓库：build 时传 SSH key（BuildKit secret，不进镜像层）
+docker build --secret id=git_ssh_key,src=./id_diag -t feishu-diag-bot .
 
-# 3. 启动（挂载配置 + 日志目录；config.yaml 里 git_ssh_key_file 指向的密钥也要挂载）
+# 3. 启动（挂载配置 + 日志目录）
 docker run -d --name feishu-diag-bot --restart unless-stopped \
   --env-file .env \
   -v ./config.yaml:/app/config.yaml:ro \
   -v /var/log/myapp:/var/log/myapp:ro \
   feishu-diag-bot
 ```
+
+内网部署：有网的机器上 build 好后 `docker save feishu-diag-bot > bot.tar`，
+拷到内网机器 `docker load < bot.tar` 即可运行（运行时不再需要访问 git 仓库，
+但仍需访问飞书 API 和模型 API，或走代理/中转）。
 
 或用 compose（`cp docker-compose.example.yml docker-compose.yml` 后改，
 另需 `cp cliproxyapi-config.example.yaml cliproxyapi-config.yaml`）：
@@ -125,17 +133,17 @@ Responses 协议。`config.yaml` 里 `codex.model_providers` 指向它
 **仓库可选**：`codex.repos` 可空，不配时 Codex 以当前工作目录（容器里是 `/app`，
 镜像里已装好 Codex CLI，可直接跑）做工作区。
 
-**启动流程**（`entrypoint.py`）：配好 SSH key → 把 `codex.repos` 里的 git URL
-clone/pull 到 `codex.repos_dir`（默认 `/app/repos`）→ 生成去掉内嵌密钥的有效配置 →
-以该配置启动 `bot.py`。本地路径的 repos 条目不 clone，原样使用；单个仓库 clone
-失败只记警告，不阻止机器人启动。
+**启动流程**（`entrypoint.py`）：把 `config.yaml` 里 `codex.repos` 的 URL
+映射到 build 时已烘焙的目录（`/app/repos/<目录>`，按镜像内
+`.baked-manifest.json`）→ 生成有效配置 → 启动 `bot.py`。本地路径的 repos 条目
+原样使用；URL 对应目录不存在时记警告并跳过，不阻止机器人启动。
+仓库更新靠重新 build（`docker compose up -d --build` 会重新 clone 最新版）。
 
 **安全注意**：
 
 - `config.yaml` / `.env` 不进镜像（`.dockerignore` 已排除），只在运行时挂载。
-- 含私钥的 `config.yaml` 勿提交到 Git；推荐用 `git_ssh_key_file` 挂载密钥文件，
-  而不是 `git_ssh_key` 内嵌私钥。
-- URL 仓库需要 Docker 入口 clone；直接 `uv run bot.py` 时 `codex.repos` 只能用本地路径。
+- BuildKit secret（`--secret id=git_ssh_key`）不会留在镜像层里，比把 key COPY 进镜像安全。
+- 直接 `uv run bot.py` 时 `codex.repos` 只能用本地路径（没有 build 时烘焙）。
 - `cliproxyapi-config.yaml` 里也有 key（上游 key + 访问代理的客户端 key），同样勿提交到 Git。
 
 ## Codex CLI 诊断（可选，默认开启）

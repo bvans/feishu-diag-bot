@@ -1,20 +1,20 @@
-"""Docker 入口：SSH key -> clone/pull 仓库 -> 生成有效配置 -> 启动机器人。
+"""Docker 入口：生成有效配置 -> 启动机器人。
 
 用法（镜像内默认）：entrypoint.py [config.yaml]
 - config.yaml 是用户挂载的配置文件（见 config.example.yaml）：里面可以是
-  git 仓库地址（SSH/HTTPS URL）、本地路径、MCP 配置、SSH 密钥、提示词模板。
-- 流程：配好 SSH key -> 把 URL 仓库 clone/pull 到 repos_dir（默认 /app/repos）->
-  生成去掉内嵌密钥的有效配置 -> 以 DIAG_BOT_CONFIG 指向它启动 bot.py。
-- 本地路径的 repos 条目不 clone，原样保留；clone/pull 失败的仓库记警告并跳过，
+  git 仓库地址（SSH/HTTPS URL）、本地路径、MCP 配置、提示词模板。
+- 诊断仓库在 build 时已烘焙进镜像（bake_repos.py + codex-repos.txt 清单），
+  启动时不再联网 clone/pull，内网可用。入口只把 config 里的 URL 映射到
+  已烘焙的目录（按 <repos_dir>/.baked-manifest.json，缺了就按命名规则推导）。
+- 本地路径的 repos 条目原样保留；URL 对应目录不存在时记警告并跳过，
   不让单个仓库拖垮机器人启动。
 - DIAG_ENTRYPOINT_DRY_RUN=1 时只做到生成有效配置就退出（便于本地验证），不启动 bot。
 """
 
 import copy
+import json
 import logging
 import os
-import shutil
-import subprocess
 import sys
 
 import yaml
@@ -63,32 +63,9 @@ def derive_repo_dir(url: str, used: set[str]) -> str:
     return name
 
 
-def setup_ssh_key(cfg: dict, home: str) -> str | None:
-    """配好 SSH key，返回 key 文件路径；没配 key 返回 None（走已有 ~/.ssh 或 HTTPS）。"""
-    ssh_dir = os.path.join(home, ".ssh")
-    os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
-    key = cfg.get("git_ssh_key") or ""
-    key_file = cfg.get("git_ssh_key_file") or ""
-    dest = os.path.join(ssh_dir, "id_diag")
-    if key:
-        log.warning("git_ssh_key 内嵌在配置里：勿提交到 Git，建议改用 git_ssh_key_file 挂载密钥文件")
-        with open(dest, "w", encoding="utf-8") as f:
-            f.write(key if key.endswith("\n") else key + "\n")
-        os.chmod(dest, 0o600)
-        return dest
-    if key_file:
-        src = os.path.expanduser(str(key_file))
-        if not os.path.isfile(src):
-            log.warning("git_ssh_key_file 不存在：%s，SSH 仓库可能 clone 失败", src)
-            return None
-        shutil.copyfile(src, dest)
-        os.chmod(dest, 0o600)
-        return dest
-    return None
-
-
 def git_env(key_path: str | None) -> dict:
-    """key 存在时让 git 用它，并首次连接自动接受 host key（accept-new，不盲目信任所有）。"""
+    """key 存在时让 git 用它，并首次连接自动接受 host key（accept-new，不盲目信任所有）。
+    供 bake_repos.py 在 build 时使用（BuildKit secret 挂在 /run/secrets/git_ssh_key）。"""
     if not key_path:
         return {}
     return {
@@ -99,21 +76,27 @@ def git_env(key_path: str | None) -> dict:
     }
 
 
-def _run_git(args: list[str], env: dict, cwd: str | None = None) -> subprocess.CompletedProcess:
-    full_env = dict(os.environ)
-    full_env.update(env)
-    return subprocess.run(
-        ["git"] + args, capture_output=True, text=True, timeout=300, env=full_env, cwd=cwd
-    )
+def _load_manifest(dest_dir: str) -> dict[str, str]:
+    """读 build 时写的 URL -> 目录名映射；没有 manifest 时返回空 dict。"""
+    path = os.path.join(dest_dir, ".baked-manifest.json")
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return {str(k): str(v) for k, v in data.items() if isinstance(v, str)} if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        log.warning("烘焙 manifest 损坏，已忽略：%s", path)
+        return {}
 
 
-def ensure_repos(cfg: dict, dest_dir: str, env: dict) -> list[str]:
-    """把 codex.repos 里的 URL clone/pull 到 dest_dir；本地路径原样保留。返回本地路径列表。"""
+def resolve_baked_repos(cfg: dict, dest_dir: str) -> list[str]:
+    """把 codex.repos 里的 URL 映射到已烘焙目录；本地路径原样保留。不联网。"""
     codex_cfg = cfg.get("codex") or {}
     entries = [str(x) for x in (codex_cfg.get("repos") or []) if str(x).strip()]
     if not entries:
         return []
-    os.makedirs(dest_dir, exist_ok=True)
+    manifest = _load_manifest(dest_dir)
     used: set[str] = set()
     local_paths: list[str] = []
     for entry in entries:
@@ -124,26 +107,15 @@ def ensure_repos(cfg: dict, dest_dir: str, env: dict) -> list[str]:
             else:
                 log.warning("本地仓库不存在，已跳过：%s", path)
             continue
-        name = derive_repo_dir(entry, used)
+        name = manifest.get(entry) or derive_repo_dir(entry, used)
         target = os.path.join(dest_dir, name)
-        if os.path.isdir(os.path.join(target, ".git")):
-            proc = _run_git(["-C", target, "pull", "--ff-only"], env)
-            if proc.returncode == 0:
-                log.info("仓库已更新：%s -> %s", entry, target)
-                local_paths.append(target)
-            else:
-                log.warning("仓库 pull 失败，沿用旧 checkout：%s（%s）", target, proc.stderr.strip()[-300:])
-                local_paths.append(target)
-            continue
-        if os.path.exists(target):
-            log.warning("目标已存在且不是 git 仓库，已跳过：%s", target)
-            continue
-        proc = _run_git(["clone", entry, target], env)
-        if proc.returncode == 0:
-            log.info("仓库已 clone：%s -> %s", entry, target)
+        if os.path.isdir(target):
             local_paths.append(target)
         else:
-            log.warning("仓库 clone 失败，已跳过：%s（%s）", entry, proc.stderr.strip()[-300:])
+            log.warning(
+                "仓库未在镜像里烘焙，已跳过：%s（build 时 codex-repos.txt 里没它，或 clone 失败）",
+                entry,
+            )
     return local_paths
 
 
@@ -159,13 +131,9 @@ def main() -> int:
     config_path = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("DIAG_BOT_CONFIG", DEFAULT_CONFIG)
     with open(config_path, encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
-    home = os.environ.get("HOME") or os.path.expanduser("~")
-    key_path = setup_ssh_key(cfg, home)
-    env = git_env(key_path)
-
     codex_cfg = cfg.get("codex") or {}
     dest_dir = os.path.expanduser(str(codex_cfg.get("repos_dir") or DEFAULT_REPOS_DIR))
-    local_repos = ensure_repos(cfg, dest_dir, env)
+    local_repos = resolve_baked_repos(cfg, dest_dir)
     effective = build_effective_config(cfg, local_repos)
 
     effective_path = os.environ.get("DIAG_EFFECTIVE_CONFIG", DEFAULT_EFFECTIVE_CONFIG)

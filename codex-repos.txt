@@ -1,0 +1,7 @@
+# 诊断仓库清单：build 时烘焙进镜像（每行一个 git URL，# 开头是注释）。
+# 公开仓库直接写 URL；私有仓库 build 时传 SSH key：
+#   docker build --secret id=git_ssh_key,src=./id_diag .
+# config.yaml 里 codex.repos 写同样的 URL，启动时映射到已烘焙的目录，不再联网 clone。
+# 不用烘焙仓库时：留空即可（Codex 以 /app 做工作区）。
+# git@github.com:myorg/myapp.git
+# https://github.com/myorg/shared-lib.git

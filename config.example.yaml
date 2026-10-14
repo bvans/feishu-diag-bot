@@ -26,14 +26,6 @@ repo:
   path: "/opt/myapp"
   include_ext: [".py", ".go", ".js", ".ts", ".java"]
 
-# Git 仓库 SSH key（二选一；都不配时用容器内已有 ~/.ssh，或只用 HTTPS 仓库）。
-# 警告：git_ssh_key 内嵌的是私钥，勿提交到 Git！推荐用 git_ssh_key_file 挂载密钥文件。
-# git_ssh_key: |
-#   -----BEGIN OPENSSH PRIVATE KEY-----
-#   ...
-#   -----END OPENSSH PRIVATE KEY-----
-git_ssh_key_file: ""   # 如 /run/secrets/git_ssh_key（docker run -v 挂载，或 compose secrets）
-
 # 提示词组成：留空用内置模板；想自定义时取消下面 template 的注释，按需改写。
 # 可用占位符：{issue} {time} {version} {env} {request_id} {repos} {logs}
 prompt:
@@ -64,9 +56,10 @@ codex:
   model: ""   # 留空用 Codex 默认模型；想固定时填如 gpt-5.3-codex
   reasoning_effort: "medium"  # low / medium / high；留空用 Codex 默认
   timeout_seconds: 180  # Codex 单次诊断超时（秒）
-  repos_dir: "/app/repos"  # Docker 入口 clone 仓库的目标目录（本地跑时可改成别的路径）
+  repos_dir: "/app/repos"  # build 时烘焙仓库的目标目录（bake_repos.py --repos-dir）
   # 诊断时 Codex 可访问的代码仓库：第一个为工作目录（-C），其余用 --add-dir 挂载。
-  # 可以是 git URL（Docker 入口会自动 clone；本地路径原样使用）。
+  # 可以写 git URL：build 时按 codex-repos.txt 烘焙进镜像，启动时映射到已烘焙目录，
+  # 运行时不再联网 clone；也可以写本地路径（原样使用）。
   # 可空：不配时以当前工作目录（容器里是 /app，镜像里已装好 Codex，可直接跑）做工作区。
   repos:
     # - "git@github.com:myorg/myapp.git"

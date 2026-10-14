@@ -16,7 +16,11 @@ services:
   feishu-diag-bot:
     depends_on:
       - cliproxyapi
-    build: .
+    build:
+      context: .
+      # 私有仓库 build 时传 SSH key（公开仓库不需要）：
+      # secrets:
+      #   - git_ssh_key
     image: feishu-diag-bot:latest
     restart: unless-stopped
     env_file:
@@ -24,5 +28,8 @@ services:
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - /var/log/myapp:/var/log/myapp:ro   # 机器人要读的日志（按 config.yaml 里的 logs 改）
-      # 私有仓库的 SSH key（config.yaml 里 git_ssh_key_file 指向容器内路径）：
-      # - ./id_diag:/run/secrets/git_ssh_key:ro
+
+# 私有仓库 build 时的 SSH key（对应上面 build.secrets，取消注释后需要 ./id_diag 文件）：
+# secrets:
+#   git_ssh_key:
+#     file: ./id_diag

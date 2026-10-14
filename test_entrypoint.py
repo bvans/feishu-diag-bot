@@ -1,7 +1,6 @@
-"""entrypoint.py 单测：URL 判定、目录命名、SSH key、clone/pull、有效配置、dry-run。"""
+"""entrypoint.py 单测：URL 判定、目录命名、已烘焙仓库映射、有效配置、dry-run。"""
 
 import os
-import stat
 import subprocess
 import sys
 import tempfile
@@ -30,28 +29,6 @@ def test_derive_repo_dir():
     assert entrypoint.derive_repo_dir("https://github.com/other/lib.git", used) == "lib"
 
 
-def test_setup_ssh_key_inline():
-    with tempfile.TemporaryDirectory() as home:
-        key = "-----BEGIN OPENSSH PRIVATE KEY-----\nFAKE\n-----END OPENSSH PRIVATE KEY-----\n"
-        path = entrypoint.setup_ssh_key({"git_ssh_key": key}, home)
-        assert path == os.path.join(home, ".ssh", "id_diag")
-        assert oct(os.stat(path).st_mode & 0o777) == "0o600"
-        with open(path, encoding="utf-8") as f:
-            assert "FAKE" in f.read()
-
-
-def test_setup_ssh_key_file():
-    with tempfile.TemporaryDirectory() as home:
-        src = os.path.join(home, "id_src")
-        with open(src, "w", encoding="utf-8") as f:
-            f.write("FAKEKEY")
-        path = entrypoint.setup_ssh_key({"git_ssh_key_file": src}, home)
-        assert path == os.path.join(home, ".ssh", "id_diag")
-        assert oct(os.stat(path).st_mode & 0o777) == "0o600"
-        assert entrypoint.setup_ssh_key({}, home) is None
-        assert entrypoint.setup_ssh_key({"git_ssh_key_file": "/nope/missing"}, home) is None
-
-
 def test_build_effective_config_strips_key():
     cfg = {"codex": {"repos": ["git@github.com:o/r.git"]}, "git_ssh_key": "SECRET"}
     eff = entrypoint.build_effective_config(cfg, ["/app/repos/r"])
@@ -60,61 +37,52 @@ def test_build_effective_config_strips_key():
     assert cfg["git_ssh_key"] == "SECRET"  # 原配置不被改动
 
 
-def _git(args, cwd):
-    env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
-               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
-    return subprocess.run(["git"] + args, cwd=cwd, env=env,
-                          capture_output=True, text=True, timeout=60)
-
-
-def _make_local_repo(base):
-    """建一个可 clone 的本地仓库，返回 file:// URL。"""
-    src = os.path.join(base, "src-repo")
-    os.makedirs(src)
-    assert _git(["init", "-q"], src).returncode == 0
-    with open(os.path.join(src, "hello.txt"), "w", encoding="utf-8") as f:
-        f.write("hi")
-    assert _git(["add", "."], src).returncode == 0
-    assert _git(["commit", "-q", "-m", "init"], src).returncode == 0
-    return f"file://{src}"
-
-
-def test_ensure_repos_clones_file_url_and_pulls():
-    import shutil
-
-    if shutil.which("git") is None:
-        print("SKIP test_ensure_repos_clones_file_url_and_pulls (no git)")
-        return
+def test_resolve_baked_repos_maps_url_to_baked_dir():
     with tempfile.TemporaryDirectory() as tmp:
-        url = _make_local_repo(tmp)
         dest = os.path.join(tmp, "repos")
-        paths = entrypoint.ensure_repos({"codex": {"repos": [url]}}, dest, {})
-        assert len(paths) == 1
-        assert os.path.isfile(os.path.join(paths[0], "hello.txt"))
-        # 第二次：已存在 -> pull，仍返回同一路径
-        assert entrypoint.ensure_repos({"codex": {"repos": [url]}}, dest, {}) == paths
+        os.makedirs(os.path.join(dest, "myapp", ".git"))
+        os.makedirs(os.path.join(dest, "lib", ".git"))
+        cfg = {"codex": {"repos": [
+            "git@github.com:org/myapp.git",       # -> dest/myapp（已烘焙）
+            "https://github.com/other/lib.git",   # -> dest/lib（已烘焙）
+            "https://github.com/nope/missing.git",  # 未烘焙 -> 跳过
+            tmp,                                 # 本地路径原样保留
+            "/nope/missing-dir",                 # 本地路径不存在 -> 跳过
+        ]}}
+        assert entrypoint.resolve_baked_repos(cfg, dest) == [
+            os.path.join(dest, "myapp"),
+            os.path.join(dest, "lib"),
+            tmp,
+        ]
 
 
-def test_ensure_repos_local_path_passthrough():
+def test_resolve_baked_repos_uses_manifest():
+    import json
+
     with tempfile.TemporaryDirectory() as tmp:
-        assert entrypoint.ensure_repos({"codex": {"repos": [tmp, "/nope/missing"]}}, tmp, {}) == [tmp]
+        dest = os.path.join(tmp, "repos")
+        # manifest 把 URL 映射到自定义目录名，优先于命名规则推导
+        os.makedirs(os.path.join(dest, "custom-name", ".git"))
+        with open(os.path.join(dest, ".baked-manifest.json"), "w", encoding="utf-8") as f:
+            json.dump({"git@github.com:org/myapp.git": "custom-name"}, f)
+        cfg = {"codex": {"repos": ["git@github.com:org/myapp.git"]}}
+        assert entrypoint.resolve_baked_repos(cfg, dest) == [os.path.join(dest, "custom-name")]
 
 
 def test_entrypoint_dry_run_end_to_end():
-    import shutil
-
-    if shutil.which("git") is None:
-        print("SKIP test_entrypoint_dry_run_end_to_end (no git)")
-        return
     with tempfile.TemporaryDirectory() as tmp:
-        url = _make_local_repo(tmp)
+        dest = os.path.join(tmp, "repos")
+        baked = os.path.join(dest, "myapp")
+        os.makedirs(os.path.join(baked, ".git"))
+        with open(os.path.join(baked, "hello.txt"), "w", encoding="utf-8") as f:
+            f.write("hi")
         home = os.path.join(tmp, "home")
         os.makedirs(home)
         cfg = {
             "codex": {
                 "enabled": True,
-                "repos": [url],
-                "repos_dir": os.path.join(tmp, "repos"),
+                "repos": ["git@github.com:org/myapp.git"],
+                "repos_dir": dest,
                 "mcp_servers": [{"name": "logsearch", "command": "npx", "args": ["-y", "x"]}],
             },
             "git_ssh_key": "SHOULD-BE-STRIPPED",
@@ -134,7 +102,7 @@ def test_entrypoint_dry_run_end_to_end():
         with open(eff_path, encoding="utf-8") as f:
             eff = yaml.safe_load(f)
         assert "git_ssh_key" not in eff
-        assert len(eff["codex"]["repos"]) == 1
+        assert eff["codex"]["repos"] == [baked]
         assert os.path.isfile(os.path.join(eff["codex"]["repos"][0], "hello.txt"))
         assert eff["prompt"]["template"].startswith("问题：")
 
