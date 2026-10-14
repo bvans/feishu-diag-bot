@@ -33,6 +33,12 @@ def test_compose_two_services_and_pinned_proxy():
     compose = _read("docker-compose.example.yml")
     assert "cliproxyapi:" in compose
     assert "feishu-diag-bot:" in compose
+    assert "image: ghcr.io/bvans/feishu-diag-bot:latest" in compose, \
+        "业务镜像默认拉 GHCR 预构建镜像，不再本地 build"
+    for line in compose.splitlines():
+        stripped = line.strip()
+        assert not stripped.startswith("build:"), \
+            f"compose 里不应有生效的 build: 行（本地构建用注释）：{line}"
     assert "eceasy/cli-proxy-api:v8.0.28" in compose, "代理镜像钉到 v8.0.28（与 config-version: 8 对得上）"
     assert "./cliproxyapi-config.yaml:/CLIProxyAPI/config.yaml" in compose
     assert "AGENTS.md:/app/AGENTS.md" in compose, "全局 AGENTS.md 挂载说明应在 compose 里"
@@ -49,7 +55,28 @@ def test_build_script_builds_only_business_image():
     build = _read("scripts/build.sh")
     assert "Dockerfile.base" not in build, "二次基础镜像已废弃，build.sh 不应再构建它"
     assert "feishu-diag-bot" in build
+    assert "ghcr.io/bvans/feishu-diag-bot:latest" in build, \
+        "本地构建应同时打 GHCR tag，compose 可直接用"
     assert "GIT_SSH_KEY" in build
+
+
+def test_github_action_builds_and_pushes_image():
+    import yaml
+
+    wf = _read(".github/workflows/docker-build.yml")
+    data = yaml.safe_load(wf)
+    on = data.get("on") or data.get(True)  # YAML 1.1 里 on 会被解析成 True
+    assert "push" in on and "pull_request" in on and "workflow_dispatch" in on
+    jobs = data["jobs"]
+    assert "test" in jobs and "build" in jobs, "先跑单测，通过后才构建推送"
+    assert jobs["build"].get("needs") == "test"
+    build_steps = jobs["build"]["steps"]
+    uses = [st.get("uses", "") for st in build_steps]
+    assert any("docker/build-push-action" in u for u in uses), "用 build-push-action 构建推送"
+    assert any("docker/login-action" in u for u in uses), "推送前需登录 GHCR"
+    assert "ghcr.io/${{ github.repository }}" in wf, "镜像名应为 ghcr.io/<owner>/<repo>"
+    assert "git_ssh_key" in wf, "私有仓库需传 GIT_SSH_KEY secret（BuildKit secret）"
+    assert "packages: write" in wf, "推送 GHCR 需要 packages: write 权限"
 
 
 def test_proxy_pin_version_matches_config_version():

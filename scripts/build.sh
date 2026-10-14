@@ -10,4 +10,6 @@ BUSINESS_ARGS=()
 if [ -n "${GIT_SSH_KEY:-}" ]; then
   BUSINESS_ARGS+=(--secret "id=git_ssh_key,src=$GIT_SSH_KEY")
 fi
-docker build "${BUSINESS_ARGS[@]}" -t feishu-diag-bot:latest .
+# 同时打两个 tag：本地名（习惯用法）+ GHCR 名（compose 默认拉的镜像名，
+# 本地构建后 docker compose up -d 可直接用，不用等 CI）。
+docker build "${BUSINESS_ARGS[@]}" -t feishu-diag-bot:latest -t ghcr.io/bvans/feishu-diag-bot:latest .

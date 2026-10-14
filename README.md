@@ -103,15 +103,19 @@ cp cliproxyapi-config.example.yaml cliproxyapi-config.yaml  # 填上游端点和
 cp .env.example .env                 # 填 FEISHU_APP_ID、FEISHU_APP_SECRET、CLIPROXYAPI_API_KEY 等
 # 诊断仓库清单（每行一个 git URL）：编辑 codex-repos.txt
 
-# 2. 构建业务镜像（代理用官方镜像，不用构建）
-scripts/build.sh
-# 私有仓库：GIT_SSH_KEY=./id_diag scripts/build.sh（build 时传 SSH key，BuildKit secret，不进镜像层）
+# 2. 拉取业务镜像（GitHub Actions 自动构建并推送到 GHCR，见下「容器镜像」一节）
+docker compose pull
+# 部署机首次拉私有包需先登录：docker login ghcr.io
+#   （用有 read:packages 权限的 Personal Access Token，用户名填 GitHub 用户名）
+# 本地构建（改完代码不想等 CI 时用）：scripts/build.sh
+#   （私有仓库：GIT_SSH_KEY=./id_diag scripts/build.sh，build 时传 SSH key，BuildKit secret，不进镜像层）
 
 # 3. 启动（两个容器）
 docker compose up -d
 ```
 
-内网部署：有网的机器上 build 好业务镜像后 `docker save feishu-diag-bot > bot.tar`，
+内网部署：有网的机器上 `docker pull ghcr.io/bvans/feishu-diag-bot:latest`
+后 `docker save ghcr.io/bvans/feishu-diag-bot:latest > bot.tar`，
 拷到内网机器 `docker load < bot.tar` 即可运行（代理镜像
 `eceasy/cli-proxy-api:v8.0.28` 同样需要 `docker save/load` 搬过去，或内网已有镜像仓库时
 直接拉取）。运行时仍需访问飞书 API 和模型 API（或走代理/中转），但不再需要访问 git 仓库。
@@ -120,7 +124,17 @@ docker compose up -d
 映射到 build 时已烘焙的目录（`/app/repos/<目录>`，按镜像内
 `.baked-manifest.json`）→ 生成有效配置 → 启动 `bot.py`。本地路径的 repos 条目
 原样使用；URL 对应目录不存在时记警告并跳过，不阻止机器人启动。
-仓库更新靠重新 build（`scripts/build.sh` 会重新 clone 最新版）。
+仓库更新靠重新构建镜像：改 `codex-repos.txt` 后 push 到 main 触发 CI，
+或本地 `scripts/build.sh`（都会重新 clone 最新版）。
+
+**容器镜像（GitHub Actions 自动构建）**：`.github/workflows/docker-build.yml`，
+push 到 main（改了 `Dockerfile` / `*.py` / `codex-repos.txt` 等镜像相关文件）/
+打 `v*` tag / 手动触发（Actions → Run workflow）时，先跑全部单测，通过后构建
+业务镜像并推送到 GHCR：`ghcr.io/bvans/feishu-diag-bot:latest`（另有 `sha-<短提交>`
+和 tag 对应的 `1.2.3` / `1.2` 标签）。PR 只构建不推送。
+私有诊断仓库需在仓库 Settings → Secrets → Actions 里加 `GIT_SSH_KEY`
+（只读 deploy key 的私钥，build 时经 BuildKit secret 传入，不进镜像层）；
+公开仓库（https URL）不用配。
 
 **代理配置**：`cliproxyapi-config.yaml` 运行时挂载到 cliproxyapi 容器的
 `/CLIProxyAPI/config.yaml`，不进镜像。`config.yaml` 里 `codex.model_providers`
@@ -154,7 +168,7 @@ uv run python webchat.py [config.yaml]   # 默认 http://127.0.0.1:8080
 
 - 不需要飞书凭据，只读 `config.yaml` 里的诊断配置（codex / llm / logs / repo）。
 - 只绑 `127.0.0.1`，不要公网暴露（无鉴权）。
-- Docker 里跑：`docker run --rm -p 127.0.0.1:8080:8080 -v ./config.yaml:/app/config.yaml:ro -v /var/log/myapp:/var/log/myapp:ro feishu-diag-bot uv run python webchat.py`（用业务镜像，命令覆盖启动 webchat；诊断要读的仓库已烘焙在镜像里）。
+- Docker 里跑：`docker run --rm -p 127.0.0.1:8080:8080 -v ./config.yaml:/app/config.yaml:ro -v /var/log/myapp:/var/log/myapp:ro ghcr.io/bvans/feishu-diag-bot:latest uv run python webchat.py`（用业务镜像，命令覆盖启动 webchat；诊断要读的仓库已烘焙在镜像里）。
 
 ## 管理配置界面（人工改部署配置，不用手写文件）
 
@@ -178,8 +192,8 @@ uv run python admin.py [配置目录]   # 默认当前目录，打开 http://127
 注意：
 - 只绑 `127.0.0.1`，不要公网暴露（无鉴权，且 `.env` 密钥会明文显示）。
 - 保存只改文件，不重启服务：改 `config.yaml` / `cliproxyapi-config.yaml` / `.env`
-  后重启容器生效（`docker compose restart`）；改 `codex-repos.txt` 后需重新 build
-  业务镜像（`scripts/build.sh`）才能烘焙新仓库。
+  后重启容器生效（`docker compose restart`）；改 `codex-repos.txt` 后需重新构建
+  镜像（push 触发 CI，或本地 `scripts/build.sh`）才能烘焙新仓库。
 - Docker 里跑：`docker run --rm -p 127.0.0.1:8081:8081 -v ./:/app/config-dir:rw feishu-diag-bot uv run python admin.py /app/config-dir`
   （配置目录需可写挂载，默认 compose 里是只读挂载，admin 在 Docker 里改不了）。
 

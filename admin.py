@@ -23,7 +23,7 @@
 注意：保存只改文件，不重启服务。配置生效规则：
 - config.yaml / cliproxyapi-config.yaml / .env：重启容器后生效
   （docker compose restart，或 docker compose up -d）。
-- codex-repos.txt：需重新 build 业务镜像（scripts/build.sh）才能烘焙新仓库。
+- codex-repos.txt：需重新构建镜像（push 触发 CI，或本地 scripts/build.sh）才能烘焙新仓库。
 """
 
 import glob
@@ -50,7 +50,7 @@ FILES = {
     "config.yaml": ("yaml", "保存后重启容器生效：docker compose restart"),
     "cliproxyapi-config.yaml": ("yaml", "保存后重启容器生效：docker compose restart"),
     ".env": ("env", "保存后重启容器生效：docker compose restart"),
-    "codex-repos.txt": ("text", "保存后需重新 build 业务镜像：scripts/build.sh"),
+    "codex-repos.txt": ("text", "保存后需重新构建镜像：push 触发 CI，或本地 scripts/build.sh"),
     "AGENTS.md": ("text", "保存后下次诊断即生效，无需重启（每次诊断重新读取）"),
 }
 
@@ -191,7 +191,7 @@ button:disabled{opacity:.5;cursor:default}
 <body>
 <header>管理配置 · 诊断机器人<small>仅限本机访问。.env 里的密钥会明文显示，不要共享屏幕/截图、不要把端口暴露到公网。保存只改文件，不重启服务。</small></header>
 <div id="main">
-<div class="warn">⚠️ 保存前会自动备份旧文件（保留最近 5 份），校验失败不写盘。改完按下方提示重启或重新 build 才生效。</div>
+<div class="warn">⚠️ 保存前会自动备份旧文件（保留最近 5 份），校验失败不写盘。改完按下方提示重启或重新构建镜像才生效。</div>
 <div id="tabs"></div>
 <div id="hint"></div>
 <div id="missing"></div>

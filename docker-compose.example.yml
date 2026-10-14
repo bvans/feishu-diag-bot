@@ -1,6 +1,7 @@
 # 复制为 docker-compose.yml 后改成你自己的值。
 # 两个容器：cliproxyapi（协议转换代理）+ feishu-diag-bot（机器人本体 + Codex）。
-# 业务镜像先构建：scripts/build.sh（私有仓库：GIT_SSH_KEY=./id_diag scripts/build.sh）
+# 业务镜像默认拉 GHCR 预构建镜像（CI 自动构建，见 .github/workflows/docker-build.yml）。
+# 本地构建：scripts/build.sh（私有仓库：GIT_SSH_KEY=./id_diag scripts/build.sh）
 services:
   # CLIProxyAPI：把 Chat Completions 兼容端点转成 Codex 要的 Responses 协议。
   # 不用它时（直连 OpenAI / ChatGPT 登录）删掉这个服务，并把 config.yaml 里
@@ -20,8 +21,9 @@ services:
   feishu-diag-bot:
     depends_on:
       - cliproxyapi
-    build: .
-    image: feishu-diag-bot:latest
+    image: ghcr.io/bvans/feishu-diag-bot:latest
+    # 本地构建（改完代码不想等 CI 时用）：scripts/build.sh，然后取消下面这行注释
+    # build: .
     restart: unless-stopped
     env_file:
       - .env   # FEISHU_APP_ID、FEISHU_APP_SECRET、GEMINI_API_KEY、OPENAI_API_KEY、CLIPROXYAPI_API_KEY
