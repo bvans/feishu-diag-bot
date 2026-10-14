@@ -35,6 +35,7 @@ def test_compose_two_services_and_pinned_proxy():
     assert "feishu-diag-bot:" in compose
     assert "eceasy/cli-proxy-api:v8.0.28" in compose, "代理镜像钉到 v8.0.28（与 config-version: 8 对得上）"
     assert "./cliproxyapi-config.yaml:/CLIProxyAPI/config.yaml" in compose
+    assert "AGENTS.md:/app/AGENTS.md" in compose, "全局 AGENTS.md 挂载说明应在 compose 里"
     assert "depends_on:" in compose
 
 

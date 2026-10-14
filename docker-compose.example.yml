@@ -27,4 +27,6 @@ services:
       - .env   # FEISHU_APP_ID、FEISHU_APP_SECRET、GEMINI_API_KEY、OPENAI_API_KEY、CLIPROXYAPI_API_KEY
     volumes:
       - ./config.yaml:/app/config.yaml:ro
+      # 全局 AGENTS.md（config.yaml 里 codex.agents_md_file 指向它；不用时不用挂）：
+      # - ./AGENTS.md:/app/AGENTS.md:ro
       - /var/log/myapp:/var/log/myapp:ro   # 机器人要读的日志（按 config.yaml 里的 logs 改）

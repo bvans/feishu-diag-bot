@@ -158,7 +158,7 @@ uv run python webchat.py [config.yaml]   # 默认 http://127.0.0.1:8080
 
 ## 管理配置界面（人工改部署配置，不用手写文件）
 
-在浏览器里改部署需要的四个配置，不用直接编辑文件：
+在浏览器里改部署需要的五个配置，不用直接编辑文件：
 
 ```bash
 uv run python admin.py [配置目录]   # 默认当前目录，打开 http://127.0.0.1:8081
@@ -169,6 +169,7 @@ uv run python admin.py [配置目录]   # 默认当前目录，打开 http://127
 - **cliproxyapi-config.yaml**：代理配置（端口/客户端 key/上游端点/模型别名）。
 - **.env**：环境变量凭据（飞书 App 密钥、各 API key）。
 - **codex-repos.txt**：build 时烘焙进业务镜像的仓库清单（每行一个 URL）。
+- **AGENTS.md**：Codex 全局指令（保存后下次诊断即生效，无需重启）。
 
 机制：保存前按类型校验（YAML 必须能解析，`.env` 每行必须是 `KEY=VALUE`），
 校验失败不写盘；每次保存前自动备份旧文件（保留最近 5 份），可一键恢复；
@@ -204,6 +205,14 @@ uv run python admin.py [配置目录]   # 默认当前目录，打开 http://127
 ```bash
 bash scripts/setup-codex.sh   # 检查 Node.js，npm install -g @openai/codex
 ```
+
+**全局 AGENTS.md**：Codex 启动时从 `CODEX_HOME` 读 `AGENTS.md`（有
+`AGENTS.override.md` 时优先读它）。机器人每次诊断用临时 `CODEX_HOME`，
+所以全局文件需由机器人拷进去：复制 `AGENTS.md.example` 为 `AGENTS.md`，
+按需改写，挂载进容器（compose 里已留好 `./AGENTS.md:/app/AGENTS.md:ro`），
+`config.yaml` 里配 `codex.agents_md_file: "/app/AGENTS.md"`（或用内联文本
+`codex.agents_md`）。仓库根目录的 `AGENTS.md` 由 Codex 自动从仓库里加载，
+适合写该仓库特有的约定，不用机器人处理。
 
 **认证**：Codex CLI 自己负责——`OPENAI_API_KEY` 环境变量（见 `.env.example`），
 或按 Codex 官方文档用 ChatGPT 登录，或 `model_providers` 里 `env_key` /

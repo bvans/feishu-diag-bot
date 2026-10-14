@@ -11,6 +11,7 @@
 - cliproxyapi-config.yaml   代理配置（端口/客户端 key/上游端点/模型别名）
 - .env                      环境变量凭据（飞书 App 密钥、各 API key）
 - codex-repos.txt           build 时烘焙进业务镜像的仓库清单（每行一个 URL）
+- AGENTS.md                 Codex 全局指令（下次诊断即生效，无需重启）
 
 安全机制：
 - 保存前按类型校验（YAML 必须能解析；.env 每行必须是 KEY=VALUE），
@@ -50,6 +51,7 @@ FILES = {
     "cliproxyapi-config.yaml": ("yaml", "保存后重启容器生效：docker compose restart"),
     ".env": ("env", "保存后重启容器生效：docker compose restart"),
     "codex-repos.txt": ("text", "保存后需重新 build 业务镜像：scripts/build.sh"),
+    "AGENTS.md": ("text", "保存后下次诊断即生效，无需重启（每次诊断重新读取）"),
 }
 
 ENV_LINE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")

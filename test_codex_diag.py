@@ -14,6 +14,7 @@ from codex_diag import (
     build_prompt,
     diagnose_with_codex,
     resolve_repos,
+    write_agents_md,
 )
 
 
@@ -94,6 +95,40 @@ def test_build_codex_toml_empty_model_omitted():
     toml = build_codex_toml({"model": "", "mcp_servers": []})
     assert "model =" not in toml
     assert "mcp_servers" not in toml
+
+
+def test_write_agents_md_from_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        src = os.path.join(tmp, "AGENTS.md")
+        with open(src, "w", encoding="utf-8") as f:
+            f.write("# 全局指令\n")
+        home = os.path.join(tmp, "codex-home")
+        os.makedirs(home)
+        write_agents_md({"agents_md_file": src}, home)
+        with open(os.path.join(home, "AGENTS.md"), encoding="utf-8") as f:
+            assert f.read() == "# 全局指令\n"
+
+
+def test_write_agents_md_inline_and_missing_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        home = os.path.join(tmp, "codex-home")
+        os.makedirs(home)
+        # 内联文本
+        write_agents_md({"agents_md": "只查、不改"}, home)
+        with open(os.path.join(home, "AGENTS.md"), encoding="utf-8") as f:
+            assert f.read() == "只查、不改\n"
+        # 文件优先于内联
+        src = os.path.join(tmp, "AGENTS.md")
+        with open(src, "w", encoding="utf-8") as f:
+            f.write("文件版\n")
+        write_agents_md({"agents_md_file": src, "agents_md": "内联版"}, home)
+        with open(os.path.join(home, "AGENTS.md"), encoding="utf-8") as f:
+            assert f.read() == "文件版\n"
+        # 文件不存在：警告并跳过，不写文件、不抛异常
+        home2 = os.path.join(tmp, "codex-home2")
+        os.makedirs(home2)
+        write_agents_md({"agents_md_file": "/nope/not-here.md"}, home2)
+        assert not os.path.exists(os.path.join(home2, "AGENTS.md"))
 
 
 def test_build_codex_home_writes_config():

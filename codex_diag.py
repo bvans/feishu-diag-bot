@@ -6,6 +6,10 @@
   repos 可空：不配时以当前工作目录（容器里是 /app）做 Codex 工作区。
 - 不碰用户现有的 ~/.codex：每次诊断生成一个临时 CODEX_HOME，里面只写本次诊断
   需要的 config.toml（模型、沙箱、审批策略、MCP 服务器），诊断完随临时目录删掉。
+- 全局 AGENTS.md：Codex 从 CODEX_HOME 读 AGENTS.md（有 AGENTS.override.md 时
+  优先读它）。临时 CODEX_HOME 是新建的，所以挂载的全局文件需由机器人拷进去
+  （codex.agents_md_file）或用内联文本（codex.agents_md）。仓库根目录的
+  AGENTS.md 由 Codex 自动从仓库里加载，不用机器人处理。
 - 只查不改：config.toml 里 approval_policy="never"、sandbox_mode="read-only"，
   Codex 只能读、不能改文件、不能弹授权框。
 - 失败不丢诊断：codex 二进制缺失 / 超时 / 非零退出 / 无输出时抛 CodexError，
@@ -95,6 +99,22 @@ def build_codex_toml(codex_cfg: dict) -> str:
             if server.get(key) is not None:
                 lines.append(f"{key} = {server[key]}")
     return "\n".join(lines) + "\n"
+
+
+def write_agents_md(codex_cfg: dict, codex_home: str) -> None:
+    """把全局 AGENTS.md 写进临时 CODEX_HOME：优先 agents_md_file（挂载的文件），
+    其次 agents_md（内联文本）。都不配时不写，Codex 只读仓库里的 AGENTS.md。"""
+    src = (codex_cfg.get("agents_md_file") or "").strip()
+    if src:
+        if os.path.isfile(src):
+            shutil.copyfile(src, os.path.join(codex_home, "AGENTS.md"))
+        else:
+            log.warning("codex.agents_md_file 不存在，已跳过：%s", src)
+        return
+    text = (codex_cfg.get("agents_md") or "").strip()
+    if text:
+        with open(os.path.join(codex_home, "AGENTS.md"), "w", encoding="utf-8") as f:
+            f.write(text + "\n")
 
 
 def build_codex_home(codex_cfg: dict, base_dir: str) -> str:
@@ -227,6 +247,7 @@ def diagnose_with_codex(issue_text: str, cfg: dict) -> str:
         os.makedirs(codex_home, exist_ok=True)
         os.chmod(codex_home, 0o700)
         build_codex_home(codex_cfg, codex_home)
+        write_agents_md(codex_cfg, codex_home)
         if has_login:
             # ChatGPT 登录的凭据在 ~/.codex/auth.json；临时 CODEX_HOME 里也要有一份，
             # 否则 Codex 找不到登录状态。诊断完随临时目录删掉。

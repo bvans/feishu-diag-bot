@@ -78,6 +78,11 @@ codex:
   #     env_key: "CLIPROXYAPI_API_KEY"  # 从该环境变量读访问 CLIProxyAPI 的 key（.env 里填）
   #     wire_api: "responses"
   #     requires_openai_auth: true
+  # 全局 AGENTS.md（Codex 启动时从 CODEX_HOME 读）：机器人每次诊断用临时
+  # CODEX_HOME，所以挂载的全局文件需由机器人拷进去。两种方式二选一：
+  # agents_md_file: "/app/AGENTS.md"  # 挂载的文件（compose 里挂 ./AGENTS.md:/app/AGENTS.md:ro）
+  # agents_md: |  # 内联文本（不挂载时用，短指令放这里）
+  #   只查、不改；结论必须有出处；用简体中文。
   # 辅助诊断的 MCP 服务器（Codex 原生支持，command 需在 PATH 里）。
   # 不需要就删掉整个 mcp_servers 一节。
   mcp_servers:
