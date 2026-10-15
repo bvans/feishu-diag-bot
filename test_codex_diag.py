@@ -101,6 +101,47 @@ def test_build_codex_toml_sandbox_mode():
     assert 'sandbox_mode = "read-only"' in build_codex_toml({"sandbox_mode": "bogus"})
 
 
+def test_build_codex_toml_mcp_tool_allowlist():
+    toml = build_codex_toml(
+        {
+            "mcp_servers": [
+                {
+                    "name": "logsearch",
+                    "command": "npx",
+                    "enabled_tools": ["search_logs"],
+                    "disabled_tools": ["delete_log"],
+                },
+                {"name": "plain", "command": "npx"},  # 不带工具范围：两行都不出现
+            ],
+        }
+    )
+    assert 'enabled_tools = ["search_logs"]' in toml
+    assert 'disabled_tools = ["delete_log"]' in toml
+    assert toml.count("enabled_tools") == 1
+    assert toml.count("disabled_tools") == 1
+    # 非列表值应被忽略，不写脏数据
+    toml2 = build_codex_toml(
+        {"mcp_servers": [{"name": "x", "command": "npx", "enabled_tools": "search_logs"}]}
+    )
+    assert "enabled_tools" not in toml2
+
+
+def test_build_codex_toml_web_search_and_tools():
+    # 默认 web_search = "disabled"
+    assert 'web_search = "disabled"' in build_codex_toml({})
+    # 显式配置
+    assert 'web_search = "live"' in build_codex_toml({"web_search": "live"})
+    # 非法值回落 disabled
+    assert 'web_search = "disabled"' in build_codex_toml({"web_search": "bogus"})
+    # [tools]：只写布尔项；不配时不写
+    toml = build_codex_toml({"tools": {"view_image": False, "web_search": True}})
+    assert "[tools]" in toml
+    assert "view_image = false" in toml
+    assert "web_search = true" in toml
+    assert "[tools]" not in build_codex_toml({})
+    assert "[tools]" not in build_codex_toml({"tools": {"view_image": "yes"}})
+
+
 def test_build_codex_toml_empty_model_omitted():
     toml = build_codex_toml({"model": "", "mcp_servers": []})
     assert "model =" not in toml

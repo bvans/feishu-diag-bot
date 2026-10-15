@@ -210,11 +210,18 @@ uv run python admin.py [配置目录]   # 默认当前目录，打开 http://127
   `base_url` / `env_key` / `wire_api` 等）。**必须用它**：实测 Codex 0.149 会忽略
   `OPENAI_BASE_URL`、仍连 api.openai.com，光设 baseURL 不生效。
 - `mcp_servers`：辅助诊断的 MCP 服务器列表（Codex 原生支持），每项配 `name` /
-  `command` / `args` / `env`。不需要就删掉整节。
+  `command` / `args` / `env`。每项可再配 `enabled_tools`（allowlist，只暴露
+  这几个工具）/ `disabled_tools`（denylist，屏蔽这几个工具）；不配时该服务
+  暴露全部工具（含写/删），诊断建议至少配 `enabled_tools` 只读 allowlist。
+  不需要就删掉整节。
+- `web_search`：Codex 联网搜索，`disabled` / `cached` / `live`，默认 `disabled`。
+  `tools.view_image`：是否让 Codex 看本地图片（布尔，默认不写、走 Codex 默认）。
 - `model`：留空用 Codex 默认模型；`reasoning_effort`：low / medium / high；
   `timeout_seconds`：单次诊断超时（默认 180 秒）。
-- `sandbox_mode`：Codex 沙箱。容器部署用 `danger-full-access`（见下），
-  本机直接跑用默认 `read-only`。
+- `sandbox_mode`：Codex 沙箱。`read-only` / `workspace-write` /
+  `danger-full-access`。注意 `approval_policy="never"` 的意思是“从不弹窗询问”，
+  不是自动拒绝；且 `codex exec` 本就固定 `never`，所以沙箱才是唯一强制边界。
+  `danger-full-access` + `never` 等价于 `--yolo`。见下“沙箱在容器里起不来”。
 
 **安装**：
 
@@ -238,17 +245,17 @@ bash scripts/setup-codex.sh   # 检查 Node.js，npm install -g @openai/codex
 要建 user namespace；而 Docker 容器默认没有 `CAP_SYS_ADMIN`、宿主也常禁非特权
 userns，于是 `bwrap: No permissions to create a new namespace`，Codex 一个命令
 都执行不了，诊断只能拿到一段“我什么都没查到”的报错。修法二选一：
-- 容器部署（推荐）：`codex.sandbox_mode: "danger-full-access"`，关掉 Codex 沙箱，
-  隔离改由容器本身提供。`approval_policy="never"` 仍在，会自动拒绝需审批的动作
-  （写文件、装包、联网等），提示词里也有“只查、不改”。
-- 想保留 Codex 沙箱：宿主机 `sysctl kernel.unprivileged_userns_clone=1`，
-  或容器加 `--cap-add=SYS_ADMIN`（权限更大，不推荐），然后 `sandbox_mode` 保持
-  `read-only`。注意 `approval_policy is Never` 时 Codex 不会申请提权，提权通道
-  不可用，别指望它自己升级权限。
+- A（首选，能动宿主机）：宿主机 `sysctl kernel.unprivileged_userns_clone=1`，
+  `sandbox_mode` 保持 `read-only`，保留 Codex 自己的沙箱。
+- B（动不了宿主机）：`codex.sandbox_mode: "danger-full-access"`，关掉 Codex 沙箱，
+  但必须同时做容器加固（`cap_drop: [ALL]`、`security_opt: [no-new-privileges:true]`）
+  + 环境变量白名单（只给 Codex 它真正需要的 key，不传 `FEISHU_APP_SECRET`、
+  `GEMINI_API_KEY` 等）。缺一不可：`danger-full-access` + `never` 等价于 `--yolo`，
+  提示词里的“只查、不改”只是模型指令，不是强制边界。
 
 **机器人怎么调它**：每次诊断生成临时 `CODEX_HOME`（不碰你的 `~/.codex`），
 里面只写本次的 `config.toml`（`approval_policy="never"`、`sandbox_mode`（默认
-`read-only`，容器部署用 `danger-full-access`）、模型、MCP 服务器）；命令是
+`read-only`）、`web_search`（默认 `disabled`）、模型、MCP 服务器）；命令是
 `codex exec --skip-git-repo-check -C <主仓库> --add-dir <其他仓库> --output-last-message <临时文件> "<提示词>"`。
 机器人启动时若 `codex.enabled=true` 但找不到 `codex` 二进制，只记一条警告，
 不影响运行。

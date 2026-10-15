@@ -10,13 +10,18 @@
   优先读它）。临时 CODEX_HOME 是新建的，所以挂载的全局文件需由机器人拷进去
   （codex.agents_md_file）或用内联文本（codex.agents_md）。仓库根目录的
   AGENTS.md 由 Codex 自动从仓库里加载，不用机器人处理。
-- 只查不改：config.toml 里 approval_policy="never"，Codex 不能弹授权框；
-  sandbox_mode 可配（codex.sandbox_mode），默认 "read-only"。
-  容器里必须用 "danger-full-access"：Codex 的 Linux 沙箱用 bubblewrap（bwrap），
-  要建 user namespace，而 Docker 容器默认没有 CAP_SYS_ADMIN、宿主也常禁非特权
-  userns，bwrap 直接起不来，Codex 一个命令都执行不了。danger-full-access 关掉
-  Codex 沙箱，隔离改由容器本身提供；approval_policy="never" 仍在，会自动拒绝
-  需审批的动作（写文件、装包、联网等），提示词里也有“只查、不改”。
+- 只查不改：config.toml 里 approval_policy="never" 的意思是“从不弹窗询问”，
+  不是自动拒绝；且 codex exec 本就固定 never、不等审批，所以沙箱才是唯一
+  强制边界。sandbox_mode 可配（codex.sandbox_mode），默认 "read-only"。
+  danger-full-access 关掉 Codex 沙箱 + never 不询问，等价于 --yolo，Codex 可
+  在容器内跑任意 shell。保留 Codex 沙箱是首选（宿主机
+  sysctl kernel.unprivileged_userns_clone=1）；动不了宿主机时用
+  danger-full-access，必须同时做容器加固（cap_drop ALL、
+  no-new-privileges）+ 环境变量白名单，缺一不可。
+- web_search 默认 "disabled"：诊断不需要 Codex 联网搜索；想开时配
+  codex.web_search: "cached" / "live"。
+- MCP 工具范围：codex.mcp_servers 下每台服务可配 enabled_tools（allowlist）
+  / disabled_tools（denylist），原样写进 config.toml；不配时该服务暴露全部工具。
 - 失败不丢诊断：codex 二进制缺失 / 超时 / 非零退出 / 无输出时抛 CodexError，
   由 diagnose.py 兜底走内置快速通道（正则 + grep + 一次 LLM 调用）。
 - 认证：Codex CLI 自己负责（OPENAI_API_KEY 环境变量、ChatGPT 登录，
@@ -48,18 +53,32 @@ def _toml_str(value) -> str:
 
 
 SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
+WEB_SEARCH_MODES = ("disabled", "cached", "live")
+
+
+def _toml_str_list(value) -> list[str]:
+    """只保留非空字符串，作 TOML 字符串数组用；非列表/元组时返回 []。"""
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(v).strip() for v in value if str(v).strip()]
 
 
 def build_codex_toml(codex_cfg: dict) -> str:
-    """生成 Codex config.toml 文本：模型、沙箱、审批策略、MCP 服务器。"""
+    """生成 Codex config.toml 文本：模型、沙箱、审批策略、web_search、MCP 服务器。"""
     sandbox = (codex_cfg.get("sandbox_mode") or "read-only").strip()
     if sandbox not in SANDBOX_MODES:
         log.warning("codex.sandbox_mode 非法（%s），回落到 read-only", sandbox)
         sandbox = "read-only"
+    # web_search 默认 disabled：诊断不需要 Codex 联网搜索；显式配了才放开。
+    web_search = (codex_cfg.get("web_search") or "disabled").strip()
+    if web_search not in WEB_SEARCH_MODES:
+        log.warning("codex.web_search 非法（%s），回落到 disabled", web_search)
+        web_search = "disabled"
     lines = [
         "# 由 feishu-diag-bot 生成（临时 CODEX_HOME），不要手改。",
         'approval_policy = "never"',
         f"sandbox_mode = {_toml_str(sandbox)}",
+        f"web_search = {_toml_str(web_search)}",
     ]
     model = (codex_cfg.get("model") or "").strip()
     if model:
@@ -70,6 +89,18 @@ def build_codex_toml(codex_cfg: dict) -> str:
     provider = (codex_cfg.get("model_provider") or "").strip()
     if provider:
         lines.append(f"model_provider = {_toml_str(provider)}")
+    # [tools]：Codex 内置工具开关。只写布尔项；不配/无有效项时不写，走 Codex 默认。
+    tools = codex_cfg.get("tools") or {}
+    if isinstance(tools, dict):
+        tool_lines = []
+        for key in ("web_search", "view_image"):
+            val = tools.get(key)
+            if isinstance(val, bool):
+                tool_lines.append(f"{key} = {'true' if val else 'false'}")
+        if tool_lines:
+            lines.append("")
+            lines.append("[tools]")
+            lines.extend(tool_lines)
     for pid, prov in (codex_cfg.get("model_providers") or {}).items():
         if not isinstance(prov, dict):
             continue
@@ -110,6 +141,12 @@ def build_codex_toml(codex_cfg: dict) -> str:
         for key in ("startup_timeout_sec", "tool_timeout_sec"):
             if server.get(key) is not None:
                 lines.append(f"{key} = {server[key]}")
+        # 工具范围：enabled_tools（allowlist）/ disabled_tools（denylist）原样透传；
+        # 不配时该服务暴露全部工具。非空字符串列表才写。
+        for key in ("enabled_tools", "disabled_tools"):
+            tool_list = _toml_str_list(server.get(key))
+            if tool_list:
+                lines.append(f"{key} = {_toml_str(tool_list)}")
     return "\n".join(lines) + "\n"
 
 
